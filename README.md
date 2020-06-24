@@ -8,13 +8,15 @@ Ageneral purpose digital quantum computer needs to perform operations with multi
 
 ## Discussion and Prototypes
 
-There have been a number of discussions on the topic. A outline of the architecture is drafted in the [STFT_pulsegen_prototype](STFT_Pulsegen_for_Quantum_Gates.ipynb) notebook.
+There have been a number of discussions on the topic. An outline of the architecture is drafted in the [STFT_pulsegen_prototype](STFT_Pulsegen_for_Quantum_Gates.ipynb) notebook.
 Another (very raw) exemplification of some DFT and time-domain relations is given in [Shape and Tone FFT](Shape_and_Tone_FFT.ipynb).
 
 
 ## Development
 
-The Gateware will be developed in migen and the intent is to build parameterizable and scalable code. Cores to be developed:
+The architecture will be deployed on the [Phaser](https://github.com/sinara-hw/Phaser/wiki) hardware of the Sinara ecosystem and will eventually be controlled through [Artiq](https://github.com/m-labs/artiq)
+
+It will be developed in [migen](https://github.com/m-labs/migen) FHDL and the intent is to build parameterizable and scalable code. Cores to be developed:
 
 - FFT
 - Half-band filters
