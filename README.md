@@ -8,8 +8,8 @@ Ageneral purpose digital quantum computer needs to perform operations with multi
 
 ## Discussion and Prototypes
 
-There have been a number of discussions on the topic. A outline of the architecture is drafted in the [] notebook.
-Another (very raw) exemplification of some DFT and time-domain relations is given in [].
+There have been a number of discussions on the topic. A outline of the architecture is drafted in the [STFT_pulsegen_prototype](STFT_Pulsegen_for_Quantum_Gates.ipynb) notebook.
+Another (very raw) exemplification of some DFT and time-domain relations is given in [Shape and Tone FFT](Shape_and_Tone_FFT.ipynb).
 
 
 ## Development
