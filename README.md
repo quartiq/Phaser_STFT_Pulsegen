@@ -3,6 +3,7 @@ Development of an STFT (short time fourier transform) pulse-generator architectu
 
 ![Block Diagram](Gatepulse_Blockdiagram.png)
 
+(Block diagram is subject to change)
 
 ## Overview
 
