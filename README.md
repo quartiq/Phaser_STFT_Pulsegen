@@ -11,7 +11,7 @@ A general purpose digital quantum computer needs to perform operations with mult
 
 ## Discussion and Prototypes
 
-There have been a number of discussions on the topic. An outline of the architecture is drafted in the [STFT pulsegen prototype](STFT_Pulsegen_for_Quantum_Gates.ipynb) notebook.
+There have been a number of [discussions](https://github.com/quartiq/phaser/issues/2) on the topic. An outline of the architecture is drafted in the [STFT pulsegen prototype](STFT_Pulsegen_for_Quantum_Gates.ipynb) notebook.
 Another (very raw) exemplification of some DFT and time-domain relations is given in [Shape and Tone FFT](Shape_and_Tone_FFT.ipynb).
 
 
