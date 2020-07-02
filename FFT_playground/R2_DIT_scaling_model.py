@@ -3,9 +3,6 @@
 
 # SingularitySurfer 2020
 
-# Numerical Model for fixed point radix2 dit fft with variable scaling.
-# https://www.ti.com/lit/an/spra948/spra948.pdf
-
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,10 +15,17 @@ class fft_model:
     
     The fixed point is just modeled via integers and bitshifting. 
     Unfortunately this means some more interpretation of intermediate results...
-    No overflows are captured by the model!
+    Overflows are captured by the model, if the total nr of bits for real/complex data is provided.
+    THE SIGN BIT IS NOT INCLUDED! 
+    
+    Dataformat example: X[0]= 1024 + 32j ; x_p = 8   ==>  X_inout[0] = 2 + 0.125j
     
     Truncation is used after the multipliers and for fft stage scaling as more
-    adder logic is required for rounding.
+    adder logic is required for rounding. (Essentially an adder at every point or rounding)
+    
+    
+    
+    https://www.ti.com/lit/an/spra948/spra948.pdf
     
     Parameters
         ----------
@@ -36,21 +40,21 @@ class fft_model:
         total number of bits in input, used for overflow checking
 
     """
-    def __init__(self,X,x_p,w_p,x_bits=1024):       # default nr of bits is _very_ high so no oflw problems
+    def __init__(self,X_in,x_p,w_p,x_bits=1024):       # default nr of bits is _very_ high so no oflw problems
         self.x_bits=x_bits
         self.w_p=w_p
         self.x_p=x_p                                #data fixed point position. scales during fft.
-        self.size =len(X)                           #Nr samples
+        self.size =len(X_in)                           #Nr samples
         assert np.log2(self.size)%1==0              ,'input length has to be power of two!'
         self.stages=int(np.log2(self.size))         #Nr stages (als nr. bits of index)
         self.stage=0                                #current stage
         self.bfls=int(self.size/2)                  #nr bfls per stage
         
-        X_brev=self.bit_reverse(X,self.stages)      #bit reverse
+        X_brev=self.bit_reverse(X_in,self.stages)      #bit reverse
         self.Xr=(X_brev.real*2**(x_p)).astype(int)          #real fixedpoint mem
         self.Xi=(X_brev.imag*2**(x_p)).astype(int)          #imag fixedpoint mem
         
-        W=np.exp(-2j*(np.pi/len(X))*np.arange(len(X)/2)) #only uses half circle twiddles
+        W=np.exp(-2j*(np.pi/self.size)*np.arange(self.size/2)) #only uses half circle twiddles
         self.Wr=(W.real*2**w_p).astype(int)          #real twiddle mem
         self.Wi=(W.imag*2**w_p).astype(int)          #imag twiddle mem
 
@@ -77,27 +81,27 @@ class fft_model:
         
         for i in range(self.stages):
             if ifft:
-                self.x_p+=1                    # always divide by 2 in ifft stage. ADDITIONAL scaling from the scaling parameter possible!!
+                self.x_p+=1                     # always divide by 2 in ifft stage. ADDITIONAL scaling from the scaling parameter possible!!
             if scaling=='none':                 # no scaling
                 self.fft_stage(0,ifft)   
-            elif scaling=='one':             # scale by one in each stage
+            elif scaling=='one':                # scale by one in each stage
                 self.fft_stage(1,ifft)                  
-                self.x_p+=1                             
-            elif scaling=='no_oflw':          # scale by one in first and second stage and by two in later
-                if i<2:                        # no overflows in real arch guaranteed
+                self.x_p-=1                             
+            elif scaling=='no_oflw':            # scale by one in first and second stage and by two in later
+                if i<2:                         # no overflows in real arch guaranteed
                     self.fft_stage(1,ifft)
-                    self.x_p+=1
+                    self.x_p-=1
                 else:
                     self.fft_stage(2,ifft)
-                    self.x_p+=2
-            elif scaling=='4tone_ifft':          # scale on first two stages and then no more
+                    self.x_p-=2
+            elif scaling=='4tone_ifft':         # scale on first two stages and then no more
                 if i<2:
                     self.fft_stage(1,ifft)
                     self.x_p-=1
                 else:
                     self.fft_stage(0,ifft)
                 
-        return (self.Xr+1j*self.Xi)
+        return (self.Xr*2**-self.x_p+1j*self.Xi*2**-self.x_p)
     
     
     def fft_stage(self,s,ifft=False):
@@ -291,19 +295,20 @@ class fft_model:
         """
         
         #TODO: research on noise modeling and "full scale noise" ie. "where do I cut the bell curve??"
-        sigma=100             # cut off gauss distribution after sigma*std. deviation
+        sigma=10             # cut off gauss distribution after sigma*std. deviation
         X_t=np.random.normal(0,sigma**-1,size)#+1j*np.random.normal(0,sigma**-1,size)    # draw random samples
         X_f=np.fft.fft(X_t)             #take fft or random samples
         X_f[int(len(X_f)/2):(int(len(X_f)/2)+int(len(X_f)/20))]=0       #cut slot
         X_t=np.fft.ifft(X_f)
         X_t=X_t*2**(x_bits-1)
         X_t=np.rint(X_t.real)+1j*np.rint(X_t.imag)          #quantize to nr bits
-        X_f_float=20*np.log10(abs(np.fft.fft(X_t).real*2**-x_bits))     #ideal fft on quantized data
+        X_t=X_t*2**-x_bits
+        X_f_float=20*np.log10(abs(np.fft.fft(X_t)))     #ideal fft on quantized data
         X_f_float[:int(len(X_f)/2)]=0           # cut out region of interest like in xilinx datasheet
         X_f_float[(int(len(X_f)/2)+int(len(X_f)/20)):]=0
         #fft_mod=fft_model(X_t,0,w_bits)         # make new model inside eval for convenience
-        self.__init__(X_t,0,w_bits)
-        X_f_model=20*np.log10(abs(self.full_fft(scaling).real*2**-(x_bits+self.x_p)))  #model fft on quantized data
+        self.__init__(X_t,x_bits,w_bits)
+        X_f_model=20*np.log10(abs(self.full_fft(scaling)))  #model fft on quantized data
         X_f_model[:int(len(X_f)/2)]=0           # cut out region of interest like in xilinx datasheet
         X_f_model[(int(len(X_f)/2)+int(len(X_f)/20)):]=0
         if plot:
@@ -343,13 +348,14 @@ class fft_model:
         """
         tone=3
         X_t=np.exp(1j*tone*np.linspace(0,2*np.pi,size,False))         # make fullscale amplitude 1 (+-0.5)
-        X_t=((X_t+np.random.normal(0,(2**-(x_bits-1))/np.sqrt(12),size))*2**x_bits)     #add one LSB qunatization noise
+        X_t=((X_t+np.random.normal(0,(2**-((x_bits-1)))/np.sqrt(12),size))*2**x_bits)     #add one LSB qunatization noise
         X_t=np.rint(X_t.real)+1j*np.rint(X_t.imag)          #quantize to nr bits
-        X_f_float=abs(np.fft.fft(X_t)*2**-x_bits)/size     #ideal fft on quantized data
+        X_t=X_t*2**-x_bits
+        X_f_float=abs(np.fft.fft(X_t))/size     #ideal fft on quantized data
         X_f_float_db=20*np.log10(X_f_float)     #ideal fft on quantized data
         #fft_mod=fft_model(X_t,0,w_bits)         # make new model inside eval for convenience
-        self.__init__(X_t,0,w_bits)
-        X_f_model=abs((self.full_fft(scaling))*2**-(self.x_p+x_bits))/size
+        self.__init__(X_t,x_bits,w_bits,x_bits)
+        X_f_model=abs((self.full_fft(scaling)))/size
         X_f_model_db=20*np.log10(X_f_model)  #model fft on quantized data
         if plot:
             plt.rc('font', size=18)
@@ -372,7 +378,7 @@ class fft_model:
     
     def evaluate_ifft(self,size,x_bits,w_bits,plot=True):
         """
-        
+        evaluate the ifft of a single tone without noise at the input
 
         Parameters
         ----------
@@ -393,10 +399,10 @@ class fft_model:
         x_p=x_bits-(np.log2(size)-1)        #nr fractional bits. log2(size) bits before point for signle tone.
         tone=3
         X_f=np.zeros(size)
-        X_f[:3]=((1<<x_bits+1)-1)*2**-x_p      #sigle real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
+        X_f[tone]=((1<<x_bits+1)-1)*2**-x_p      #sigle real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
         
         self.__init__(X_f,x_p,w_bits,x_bits)
-        X_t=(self.full_fft(scaling='4tone_ifft',ifft=True))*2**-self.x_p
+        X_t=(self.full_fft(scaling='4tone_ifft',ifft=True))
         if plot:
             plt.rc('font', size=18)
             fig,ax = plt.subplots(1, 2, figsize=(15,5))
@@ -423,10 +429,10 @@ class fft_model:
 
 a=fft_model([.1,.1,.1,.1,.1,.1,.1,.1],6,18)
 # eval not yet with scaling
-#a.evaluate_slot(1024,24,18,'none')
+a.evaluate_slot(1024,24,18,'none')
 #a.evaluate_tone(1024,16,8,'none')      # very low twiddle precision! noise concentrates at harmonics
-a.evaluate_tone(1024,16,18,'none')     # 18 fractional twiddle bits, i think I can build this with 18b wide rom
-a.evaluate_ifft(1024,16,18)      
+#a.evaluate_tone(1024,16,18,'no_oflw')     # 18 fractional twiddle bits, i think I can build this with 18b wide rom
+#a.evaluate_ifft(1024,16,18)      
         
         
         
