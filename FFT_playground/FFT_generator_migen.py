@@ -429,11 +429,11 @@ class Fft(Module):
                 p += 1
                 xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
                 xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
-                if (xr2cpl & (1 << self.width_o - 1)):
+                if xr2cpl & (1 << self.width_o - 1):
                     xr = xr2cpl - 2 ** self.width_o + 1
                 else:
                     xr = xr2cpl
-                if (xi2cpl & (1 << self.width_o - 1)):
+                if xi2cpl & (1 << self.width_o - 1):
                     xi = xi2cpl - 2 ** self.width_o +1
                 else:
                     xi = xi2cpl

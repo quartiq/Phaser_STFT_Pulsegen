@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-class fft_model:
+class FftModel:
     """fixed point radix2 dit fft with fixed point scaling numerical model
     
     Takes a complex fixed point vector with fixed point position to take the fft of.
@@ -28,7 +28,7 @@ class fft_model:
     
     Parameters
         ----------
-    X : complex array
+    x_in : complex array
         complex input vector
     x_p : int
         input array fixed point position / nr fractional bits
@@ -39,25 +39,25 @@ class fft_model:
 
     """
 
-    def __init__(self, X_in, x_p, w_p, x_bits=1024):  # default nr of bits is _very_ high so no oflw problems
+    def __init__(self, x_in, x_p, w_p, x_bits=1024):  # default nr of bits is _very_ high so no oflw problems
         self.x_bits = x_bits
         self.w_p = w_p
         self.x_p = x_p  # data fixed point position. scales during fft.
-        self.size = len(X_in)  # Nr samples
+        self.size = len(x_in)  # Nr samples
         assert np.log2(self.size) % 1 == 0, 'input length has to be power of two!'
         self.stages = int(np.log2(self.size))  # Nr stages (als nr. bits of index)
         self.stage = 0  # current stage
         self._bfls = int(self.size / 2)  # nr _bfls per stage
 
-        X_brev = self.bit_reverse(X_in, self.stages)  # bit reverse
-        # self.Xr=np.arange(0,self.size)# debug data
-        self.Xr = (X_brev.real * 2 ** (x_p)).astype(int)  # real fixedpoint mem
-        # self.Xi=np.arange(0,-self.size,-1)# debug data
-        self.Xi = (X_brev.imag * 2 ** (x_p)).astype(int)  # imag fixedpoint mem
+        x_brev = self.bit_reverse(x_in, self.stages)  # bit reverse
+        # self.xr=np.arange(0,self.size)# debug data
+        self.xr = (x_brev.real * 2 ** (x_p)).astype(int)  # real fixedpoint mem
+        # self.xi=np.arange(0,-self.size,-1)# debug data
+        self.xi = (x_brev.imag * 2 ** (x_p)).astype(int)  # imag fixedpoint mem
 
-        W = np.exp(-2j * (np.pi / self.size) * np.arange(self.size / 2))  # only uses half circle twiddles
-        self.Wr = (W.real * 2 ** w_p).astype(int)  # real twiddle mem
-        self.Wi = (W.imag * 2 ** w_p).astype(int)  # imag twiddle mem
+        w = np.exp(-2j * (np.pi / self.size) * np.arange(self.size / 2))  # only uses half circle twiddles
+        self.Wr = (w.real * 2 ** w_p).astype(int)  # real twiddle mem
+        self.wi = (w.imag * 2 ** w_p).astype(int)  # imag twiddle mem
 
     def full_fft(self, scaling='one', ifft=False):
         """
@@ -101,7 +101,7 @@ class fft_model:
                 else:
                     self.fft_stage(0, ifft)
 
-        return (self.Xr * 2 ** -self.x_p + 1j * self.Xi * 2 ** -self.x_p)
+        return self.xr * 2 ** -self.x_p + 1j * self.xi * 2 ** -self.x_p
 
     def fft_stage(self, s, ifft=False):
         """
@@ -119,25 +119,25 @@ class fft_model:
         None.
 
         """
-        assert (np.amax(abs(self.Xr)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
-        assert (np.amax(abs(self.Xi)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
+        assert (np.amax(abs(self.xr)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
+        assert (np.amax(abs(self.xi)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
         t_s = (self._bfls) >> self.stage  # twiddle index step size
         for i in range(self._bfls):
             w_idx = (t_s * i) % (self._bfls)  # twiddle factor index for each stage. wraps around.
             q = (1 << (self.stage)) - 1  # lower bits bitmask ie 000000000011 for s=3. responsible for consecuteve parts
             x_idx = (((i & ~q) << 1) | (i & q)) + ( 1 << self.stage)  # compute memory adress.
-            ar, ai = self.Xr[x_idx - (1 << self.stage)], self.Xi[x_idx - (1 << self.stage)]  # mem access
-            br, bi = self.Xr[x_idx], self.Xi[x_idx]
-            wr, wi = self.Wr[w_idx], self.Wi[w_idx]
+            ar, ai = self.xr[x_idx - (1 << self.stage)], self.xi[x_idx - (1 << self.stage)]  # mem access
+            br, bi = self.xr[x_idx], self.xi[x_idx]
+            wr, wi = self.Wr[w_idx], self.wi[w_idx]
             wi = -wi if ifft else wi  # complex conjugate for ifft
             cr, ci, dr, di = self._bfl(ar, ai, br, bi, wr, wi, self.w_p, s)  # butterfly with no scaling
-            self.Xr[x_idx - (1 << self.stage)], self.Xi[x_idx - (1 << self.stage)] = cr, ci
-            self.Xr[x_idx], self.Xi[x_idx] = dr, di
+            self.xr[x_idx - (1 << self.stage)], self.xi[x_idx - (1 << self.stage)] = cr, ci
+            self.xr[x_idx], self.xi[x_idx] = dr, di
 
         self.stage += 1
         stage = self.stage
-        assert (np.amax(abs(self.Xr)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
-        assert (np.amax(abs(self.Xi)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
+        assert (np.amax(abs(self.xr)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
+        assert (np.amax(abs(self.xi)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
 
     def _bfl(self, ar, ai, br, bi, wr, wi, p, s):
         """
@@ -198,16 +198,17 @@ class fft_model:
         print(f'c_fixed={c * 2 ** -ab_p} \t d_fixed={d * 2 ** -ab_p}')
         print(f'c_float={(b * w) + a} \t d_float={-(b * w) + a}')
 
-    def cmult4(self, br, bi, wr, wi, p):
+    @staticmethod
+    def cmult4(br, bi, wr, wi, p):
         """
         Fixedpoint complex multiplier using 4 real multipliers 
         with p bitshift truncation after the multipliers.
 
         Parameters
         ----------
-        ar : fixed point
+        wr : fixed point
             a real
-        ai : fixed point
+        wi : fixed point
             a imag
         br : fixed point
             b real
@@ -268,30 +269,30 @@ class fft_model:
         ci = temp - ar_br - ai_bi  # imag output
         return cr, ci
 
-    def bit_reverse(self, X, bits):
+    def bit_reverse(self, x, bits):
         """
         index bit reverse input array
 
         Parameters
         ----------
-        X : complex array
+        x : complex array
             inp vector
         bits : int
-            nr bits of vector index (e.g. 4 for len(X)=16)
+            nr bits of vector index (e.g. 4 for len(x)=16)
 
         Returns
         -------
-        X_brev : complex array
+        x_brev : complex array
             output with bit reversed index (i.e. 100 for 001)
 
         """
-        X_brev = np.empty(len(X), 'complex')
-        for i, x in enumerate(X):
+        x_brev = np.empty(len(x), 'complex')
+        for i, k in enumerate(x):
             binary = bin(i)
             reverse = binary[-1:1:-1]
             pos = int(reverse + (bits - len(reverse)) * '0', 2)
-            X_brev[i] = X[pos]
-        return X_brev
+            x_brev[i] = x[pos]
+        return x_brev
 
     def evaluate_slot(self, size, x_bits, w_bits, scaling='none', plot=True):
         """
@@ -372,23 +373,23 @@ class fft_model:
 
         """
         tone = 3
-        X_t = np.exp(1j * tone * np.linspace(0, 2 * np.pi, size, False))  # make fullscale amplitude 1 (+-0.5)
-        X_t = ((X_t + np.random.normal(0, (2 ** -((x_bits - 1))) / np.sqrt(12),
+        x_t = np.exp(1j * tone * np.linspace(0, 2 * np.pi, size, False))  # make fullscale amplitude 1 (+-0.5)
+        x_t = ((x_t + np.random.normal(0, (2 ** -(x_bits - 1)) / np.sqrt(12),
                                        size)) * 2 ** x_bits)  # add one LSB qunatization noise
-        X_t = np.rint(X_t.real) + 1j * np.rint(X_t.imag)  # quantize to nr bits
-        X_t = X_t * 2 ** -x_bits
-        X_f_float = abs(np.fft.fft(X_t)) / size  # ideal fft on quantized data
-        X_f_float_db = 20 * np.log10(X_f_float)  # ideal fft on quantized data
-        # fft_mod=fft_model(X_t,0,w_bits)         # make new model inside eval for convenience
-        self.__init__(X_t, x_bits, w_bits, x_bits)
-        X_f_model = abs((self.full_fft(scaling))) / size
-        X_f_model_db = 20 * np.log10(X_f_model)  # model fft on quantized data
+        x_t = np.rint(x_t.real) + 1j * np.rint(x_t.imag)  # quantize to nr bits
+        x_t = x_t * 2 ** -x_bits
+        x_f_float = abs(np.fft.fft(x_t)) / size  # ideal fft on quantized data
+        x_f_float_db = 20 * np.log10(x_f_float)  # ideal fft on quantized data
+        # fft_mod=fft_model(x_t,0,w_bits)         # make new model inside eval for convenience
+        self.__init__(x_t, x_bits, w_bits, x_bits)
+        x_f_model = abs((self.full_fft(scaling))) / size
+        x_f_model_db = 20 * np.log10(x_f_model)  # model fft on quantized data
         if plot:
             plt.rc('font', size=18)
             plt.figure(1, [20, 10])
             plt.title('Single tone performance:')
-            plt.plot(X_f_float_db.real, label='ideal')
-            plt.plot(X_f_model_db.real, label='model')
+            plt.plot(x_f_float_db.real, label='ideal')
+            plt.plot(x_f_model_db.real, label='model')
             plt.legend()
             plt.grid()
             plt.show()
@@ -396,10 +397,10 @@ class fft_model:
         # wow, calculating SNR and understanding whats going on is not trivial.. Effects:
         # * SNR of a complex signal is generally slightly higher as the real signal
         # * calculating SNR from spectrum makes a tiny mistake because some noise falls into the signal bin
-        SNR_in = self.calc_SNR(X_f_float, tone) 
-        SNR_out = self.calc_SNR(X_f_model, tone)  
+        snr_in = self.calc_snr(x_f_float, tone)
+        snr_out = self.calc_snr(x_f_model, tone)
         print('---------------- \n tone eval:')
-        print(f'input SNR: {SNR_in} \t output SNR: {SNR_out}')
+        print(f'input SNR: {snr_in} \t output SNR: {snr_out}')
 
     def evaluate_ifft(self, size, x_bits, w_bits, plot=True):
         """
@@ -423,39 +424,40 @@ class fft_model:
         """
         x_p = x_bits - (np.log2(size) - 1)  # nr fractional bits. log2(size) bits before point for signle tone.
         tone = 3
-        X_f = np.zeros(size, dtype='complex')
-        X_f[tone] = 1j * ((
-                                      1 << x_bits - 1) - 1) * 2 ** -x_p  # sigle real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
+        x_f = np.zeros(size, dtype='complex')
+        x_f[tone] = 1j * ((1 << x_bits - 1) - 1) * 2 ** -x_p
+        # single real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
 
-        self.__init__(X_f, x_p, w_bits, x_bits)
-        X_t = (self.full_fft(scaling='one', ifft=True))
+        self.__init__(x_f, x_p, w_bits, x_bits)
+        x_t = (self.full_fft(scaling='one', ifft=True))
         if plot:
             plt.rc('font', size=18)
             fig, ax = plt.subplots(1, 2, figsize=(15, 5))
             ax[0].set_title('ifft output:')
-            ax[0].plot(X_t)
-            X_f = 20 * np.log10(abs(np.fft.fft(X_t).real))  # with only one tone, the even/odd bins will see no noise..
-            X_f[X_f == -np.inf] = np.min(X_f[X_f != -np.inf])  # set -inf values to lowest occurring value in plot
+            ax[0].plot(x_t)
+            x_f = 20 * np.log10(abs(np.fft.fft(x_t).real))  # with only one tone, the even/odd bins will see no noise..
+            x_f[x_f == -np.inf] = np.min(x_f[x_f != -np.inf])  # set -inf values to lowest occurring value in plot
             ax[1].set_title('ifft output spectrum:')
-            ax[1].plot(X_f.real)
+            ax[1].plot(x_f.real)
 
-        SNR = self.calc_SNR(X_t, tone, False)
+        SNR = self.calc_snr(x_t, tone, False)
         print('---------------- \n ifft eval:')
         print(f'SNR: {SNR} ')
 
-    def calc_SNR(self, X, tone, freq_domain=True):
+    @staticmethod
+    def calc_snr(x, tone, freq_domain=True):
         """ 
         helper to calc SNR of X at complex freq tone
         Data can be given in freq or time domain
         """
         if not freq_domain:
-            X = np.fft.fft(X)
-        return 10 * np.log10((X[tone] * np.conj(X[tone])) / (
-        (np.sum(X * np.conj(X)) - X[tone] * np.conj(X[tone]))))  # calc SNR by integrating over noise
+            x = np.fft.fft(x)
+        return 10 * np.log10((x[tone] * np.conj(x[tone])) / (np.sum(x * np.conj(x)) - x[tone] * np.conj(x[tone])))
+        # calc SNR by integrating over noise
 
 
 if __name__ == "__main__":
-    a = fft_model([.1, .1, .1, .1, .1, .1, .1, .1], 6, 18)
+    a = FftModel([.1, .1, .1, .1, .1, .1, .1, .1], 6, 18)
     # eval not yet with scaling
     # a.evaluate_slot(1024,24,16,'none')
     # a.evaluate_tone(1024,16,8,'one')      # very low twiddle precision! noise concentrates at harmonics
