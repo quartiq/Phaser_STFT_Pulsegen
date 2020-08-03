@@ -24,7 +24,15 @@ class Fft(Module):
         Butterfly core:
         The butterfly core contains the pipelined computation datapath, the twiddle memory,
         twiddle decoder and twiddle address calculator. Complex multiplication is implemented
-        using either 3 or 4 real multipliers and adders. Todo: Twiddle decoder
+        with a focus on accuracy using 4 real multipliers and adders. The core is fully pipelined,
+        ingesting two inputs and emitting two outputs at every clockcycle. The computation
+        pipeline has 3 stages and fetching takes one cycle. Writeback happens in the same cycle
+        as the last computation.
+
+        Twiddle Factors:
+        The Twiddle factors are basically just points on the unit circle. Due to symmetries
+        a lot of the points can be generated from only 1/4th of the full circle. The twiddle
+        decoder multiplexes the saved data to the right position for the requested twiddle factor.
 
         Memory multiplexing:
         There are 3 banks of data-ram in total. ram1 always gets read and written in order,
@@ -134,19 +142,20 @@ class Fft(Module):
         a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we = self._data_scheduler()
 
         inp_ram_adr = Signal(self.log2n)  # physical ram adress
+        last_bit_xout_adr_l = Signal()  # one clock delayed for correct output routing after ram access
 
         self.comb += [  # fetching/loading ports
 
-            xram1_port1.adr.eq(Mux(self.busy, x1p1_adr, inp_ram_adr)),
-            xram2a_port1.adr.eq(Mux(self.busy, x2p1_adr, inp_ram_adr)),
-            xram2b_port1.adr.eq(Mux(self.busy, x2p1_adr, inp_ram_adr)),
+            xram1_port1.adr.eq(Mux(self.busy, x1p1_adr, inp_ram_adr[1:])),
+            xram2a_port1.adr.eq(Mux(self.busy, x2p1_adr, inp_ram_adr[1:])),
+            xram2b_port1.adr.eq(Mux(self.busy, x2p1_adr, inp_ram_adr[1:])),
             xram1_port1.dat_w.eq(self.x_in),
             xram2a_port1.dat_w.eq(self.x_in),
             xram2b_port1.dat_w.eq(self.x_in),
-            xram1_port1.we.eq(~self.busy & self.x_in_we & self.x_in_adr[0]),
+            xram1_port1.we.eq(~self.busy & self.x_in_we & inp_ram_adr[0]),
             # use LSB of address to switch between rams when loading data
-            xram2a_port1.we.eq(~self.busy & self.x_in_we & ~self.x_in_adr[0]),
-            xram2b_port1.we.eq(~self.busy & self.x_in_we & ~self.x_in_adr[0]),
+            xram2a_port1.we.eq(~self.busy & self.x_in_we & ~inp_ram_adr[0]),
+            xram2b_port1.we.eq(~self.busy & self.x_in_we & ~inp_ram_adr[0]),
             ar.eq(Mux(a_mux_l == 0, xram1_port1.dat_r[:self.width_int], dat_r[:self.width_int])),
             ai.eq(Mux(a_mux_l == 0, xram1_port1.dat_r[self.width_int:], dat_r[self.width_int:])),
             br.eq(Mux(a_mux_l, xram1_port1.dat_r[:self.width_int], dat_r[:self.width_int])),
@@ -157,8 +166,9 @@ class Fft(Module):
             xram1_port2.adr.eq(Mux(self.busy, x1p2_adr, self.x_out_adr[:-1])),
             xram2a_port2.adr.eq(Mux(self.busy, x2p2_adr, self.x_out_adr[:-1])),
             xram2b_port2.adr.eq(Mux(self.busy, x2p2_adr, self.x_out_adr[:-1])),
-            self.x_out.eq(Mux(self.x_out_adr[-1] == 0, xram1_port2.dat_r,           # first half of data is in ram1, second in ram2
-                              Mux(c_x2_mux, xram2a_port2.dat_r, xram2b_port2.dat_r))),
+            self.x_out.eq(
+                Mux(last_bit_xout_adr_l == 0, xram1_port2.dat_r,  # first half of data is in ram1, second in ram2
+                    Mux(c_x2_mux, xram2a_port2.dat_r, xram2b_port2.dat_r))), # fetch from last used ram2
             xram1_port2.we.eq(self.busy & bfl_we),
             xram2a_port2.we.eq(self.busy & (bfl_we & c_x2_mux)),
             xram2b_port2.we.eq(self.busy & (bfl_we & (~c_x2_mux))),
@@ -167,18 +177,23 @@ class Fft(Module):
             xram2b_port2.dat_w.eq(Cat(Mux(c_mux, cr, dr), Mux(c_mux, ci, di))),
         ]
 
+        self.sync += [
+            last_bit_xout_adr_l.eq(self.x_out_adr[-1])  # delay by one clk
+        ]
+
         # IO logic
         # =============================================================
 
         self.comb += [
-            inp_ram_adr.eq(self.x_in_adr[1:]),  # no bitreversing, just in order
+            inp_ram_adr.eq(self.x_in_adr),  # no bitreversing, just in order
         ]
 
     def _data_scheduler(self):
         """data ram address and ram multiplexer scheduler."""
         pos_r = Signal(self.log2n - 1, reset=0)  # read position reg
         pos_w = Signal(self.log2n - 1, reset=0)  # pipeline delay delayed couter
-        stage_w = Signal(int(np.ceil(np.log2(self.log2n))), reset=0)  # write stage position; resets to -1 at fft start
+        stage_w = Signal(int(np.ceil(np.log2(self.log2n))) + 1,
+                         reset=0)  # write stage position; resets to -1 at fft start
         a_mux = Signal()  # a ram muxing signal
         c_mux = Signal()  # c ram muxing signal
         a_mux_l = Signal()  # (last) 1 clk delayed mux; needed to route data at ram output one clk after addr was set
@@ -195,26 +210,35 @@ class Fft(Module):
         x2p2_adr = Signal(self.log2n - 1)
 
         self.sync += [
+            # start/stop logic
             laststart.eq(self.start),
+            If((self.start & (~laststart) & ~self.busy),  # if start signal was set
+               self.busy.eq(1),
+               self.done.eq(0),
+               self.stage.eq(0),
+               stage_w.eq(-1),  # reset to -1
+               pos_r.eq(0),
+               ),
+            If(reduce(and_, pos_w) & (stage_w == self.log2n - 1),  # if at last write
+               bfl_we.eq(0),
+               self.busy.eq(0),
+               self.done.eq(1),
+               ),
+
+            # position and staging
             If(self.en & self.busy, pos_r.eq(pos_r + 1)),  # count only if enabled; overflows at stage transition
             If(reduce(and_, pos_r), self.stage.eq(self.stage + 1)),
-            If(reduce(and_, pos_w), stage_w.eq(stage_w + 1)),
-            If((self.start & (~laststart)),  # if start signal was set
-               self.busy.eq(1),
-               self.stage.eq(0),
-               stage_w.eq(-1)  # reset to -1
-               ),
+            If(reduce(and_, pos_w) & ~(stage_w == self.log2n - 1), stage_w.eq(stage_w + 1)),
+            # dont count up write pos at ultimate stage so c_x2_mux is still in the right position
             If(reduce(and_, pos_w) & reduce(and_, stage_w) & (self.busy == 1), bfl_we.eq(1)),
             # enable write on next (stage_w==0) cycle
-            # write enable if at first write pos in first stage
-            pos_w.eq(pos_r - self.PIPE_DELAY + 1),  # writeback needs to be delayed 4 cycles due to pipelining
-            a_mux_l.eq(a_mux),
+            a_mux_l.eq(a_mux),  # a_mux is needed one cycle later to route data output of ram
             a_x2_mux_l.eq(a_x2_mux)
         ]
 
-        for i in range(self.log2n)[1:]:  # Makeshift Mux
+        for i in range(self.log2n)[1:]:  # Mux for read position bits
             self.comb += If(self.stage == i, posbit_r.eq(pos_r[i - 1]))
-        for i in range(self.log2n - 1):  # Makeshift Mux
+        for i in range(self.log2n - 1):  # Mux for write position bits
             self.comb += If(stage_w == i, posbit_w.eq(pos_w[i]))
 
         self.comb += [
@@ -228,8 +252,9 @@ class Fft(Module):
             # first append 0 at LSB and then shift out to effectively make self.stage-1.
 
             # writeback logic
+            pos_w.eq(pos_r - self.PIPE_DELAY),  # writeback needs to be delayed due to pipelining
             c_x2_mux.eq(~stage_w[0]),  # use last bit of stage to toggle between x2 mems
-            c_mux.eq(posbit_w),
+            c_mux.eq(posbit_w),  # toggle c mux at stage bit of write position
             x1p2_adr.eq(pos_w),  # ram 1 is just always sorted
             x2p2_adr.eq(pos_w)  # ram 2 is also read in order
         ]
@@ -243,7 +268,7 @@ class Fft(Module):
 
     def _bfl_pipe4(self, ar, ai, br, bi, wr, wi):
         """Butterfly computation pipe.
-        1 fetching stage, 3 computation stages (with last addition and writeback in one cycle) and uses 4 DSPs.
+        1 fetching stage, 3 computation stages (with last addition and writeback in one cycle), uses 4 DSPs.
         Scaling is performed at the end of the computation.
         """
         self.PIPE_DELAY = 4
@@ -348,22 +373,82 @@ class Fft(Module):
                 yield self.en.eq(1)
 
     def io_tb(self):
+        """ input output testbench for 128 point fft"""
+        x = np.zeros(self.n)
+        y = np.zeros(self.n, dtype="complex")
+        x[3] = ((1 << self.width_i - 1) - 1) << self.width_int  # shift to complex data
+        # maximal single real tone at 3rd coef (without DC). shifted to mem offset for real values.
+        for i, k in enumerate(x):
+            binary = bin(i)
+            reverse = binary[-1:1:-1]
+            pos = int(reverse + (self.log2n - len(reverse)) * '0', 2)
+            y[i] = x[pos]
+        y = y.real.astype('int').tolist()
+        p = 0
         for i in range(1024):
             yield
-            if i == 1:
-                yield self.x_in.eq(i)
-                yield self.x_in_adr.eq(i)
+            yield self.start.eq(0)
+            if i < self.n:
                 yield self.x_in_we.eq(1)
-            if i >= 10:
-                yield self.x_out_adr.eq(i-10)
-            if i >= 15:
-                yield self.x_out_adr.eq(i-10 | (1<<6))
+                yield self.x_in_adr.eq(i)
+                yield self.x_in.eq(y[i-1])
+            if i == self.n+1:
+                yield self.x_in_we.eq(0)
+                yield self.start.eq(1)
+                yield self.en.eq(1)
+            if (yield self.done):
+                yield self.x_out_adr.eq(p)
+                p += 1
+                xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
+                xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
+                if (xr2cpl & (1 << self.width_o - 1)):
+                    xr = xr2cpl - 2 ** self.width_o + 1
+                else:
+                    xr = xr2cpl
+                if (xi2cpl & (1 << self.width_o - 1)):
+                    xi = xi2cpl - 2 ** self.width_o +1
+                else:
+                    xi = xi2cpl
+                print(f'pos:{p - 3}\treal:{xr}  \t\timag:{xi}')
+
+            if p >= (self.n+2):
+                break
+
+    def out_tb(self):
+        """ fft output testbench """
+        p = 0
+        for i in range(1024):
+            if i == 1:
+                yield self.start.eq(1)
+                yield self.en.eq(1)
+            else:
+                yield self.start.eq(0)
+            yield
+            if (yield self.done):
+                yield self.x_out_adr.eq(p)
+                p += 1
+                xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
+                xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
+                if (xr2cpl & (1 << self.width_o - 1)):
+                    xr = xr2cpl - 2 ** self.width_o + 1
+                else:
+                    xr = xr2cpl
+                if (xi2cpl & (1 << self.width_o - 1)):
+                    xi = xi2cpl - 2 ** self.width_o +1
+                else:
+                    xi = xi2cpl
+                print(f'pos:{p - 3}\treal:{xr}  \t\timag:{xi}')
+
+            if p >= 130:
+                break
 
 
 if __name__ == "__main__":
     test = Fft(n=128, ifft=True)
 
-    run_simulation(test, test.internal_tb(), vcd_name="internal_BIG.vcd")
+    run_simulation(test, test.io_tb(), vcd_name="io.vcd")
+    # run_simulation(test, test.internal_tb(), vcd_name="internal_BIG.vcd")
+    # run_simulation(test, test.out_tb(), vcd_name="out.vcd")
     # run_simulation(test, test.twiddle_tb(), vcd_name="twiddle.vcd")
     # run_simulation(test, test.bfl_tb(), vcd_name="bfl.vcd")
     # print(o.main_source)
