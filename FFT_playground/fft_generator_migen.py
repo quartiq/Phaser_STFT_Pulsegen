@@ -446,7 +446,7 @@ class Fft(Module):
 if __name__ == "__main__":
     test = Fft(n=128, ifft=True)
 
-    run_simulation(test, test.io_tb(), vcd_name="io.vcd")
+    run_simulation(test, test.io_tb(), vcd_name="vcd/io.vcd")
     # run_simulation(test, test.internal_tb(), vcd_name="internal_BIG.vcd")
     # run_simulation(test, test.out_tb(), vcd_name="out.vcd")
     # run_simulation(test, test.twiddle_tb(), vcd_name="twiddle.vcd")

@@ -39,7 +39,7 @@ class FftModel:
 
     """
 
-    def __init__(self, x_in, x_p, w_p, x_bits=1024):  # default nr of bits is _very_ high so no oflw problems
+    def __init__(self, x_in, x_p=0, w_p=16, x_bits=1024):  # default nr of bits is _very_ high so no oflw problems
         self.x_bits = x_bits
         self.w_p = w_p
         self.x_p = x_p  # data fixed point position. scales during fft.
@@ -51,9 +51,9 @@ class FftModel:
 
         x_brev = self.bit_reverse(x_in, self.stages)  # bit reverse
         # self.xr=np.arange(0,self.size)# debug data
-        self.xr = (x_brev.real * 2 ** (x_p)).astype(int)  # real fixedpoint mem
+        self.xr = (x_brev.real * 2 ** x_p).astype(int)  # real fixedpoint mem
         # self.xi=np.arange(0,-self.size,-1)# debug data
-        self.xi = (x_brev.imag * 2 ** (x_p)).astype(int)  # imag fixedpoint mem
+        self.xi = (x_brev.imag * 2 ** x_p).astype(int)  # imag fixedpoint mem
 
         w = np.exp(-2j * (np.pi / self.size) * np.arange(self.size / 2))  # only uses half circle twiddles
         self.Wr = (w.real * 2 ** w_p).astype(int)  # real twiddle mem
