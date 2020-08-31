@@ -24,6 +24,7 @@ jobs:
        
       - name: Install dependencies
         run: |
+          pip install numpy
           pip install git+https://github.com/m-labs/migen.git
           pip install git+https://github.com/m-labs/misoc.git
 
