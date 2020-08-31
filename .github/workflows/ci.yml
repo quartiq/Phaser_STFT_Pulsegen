@@ -29,6 +29,5 @@ jobs:
 
       - name: run unittests
         run: |
-          echo Test
-          #unittest FFT_playground/test_fft.py
+          python -m unittest FFT_playground/test_fft.py
 
