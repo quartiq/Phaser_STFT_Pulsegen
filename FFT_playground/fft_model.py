@@ -12,10 +12,10 @@ class FftModel:
     Takes a complex fixed point vector with fixed point position to take the fft of.
     The data is stored in an internal vector and successive fft stages can be performed.
     
-    The fixed point is just modeled via integers and bitshifting. 
+    Fixed point ismodeled via integers and bitshifting.
     Unfortunately this means some more interpretation of intermediate results...
     Overflows are captured by the model, if the total nr of bits for real/complex data is provided.
-    THE SIGN BIT IS NOT INCLUDED! 
+    Sign bit is not included.
     
     Dataformat example: X[0]= 1024 + 32j ; x_p = 8   ==>  X_inout[0] = 2 + 0.125j
     
@@ -56,8 +56,8 @@ class FftModel:
         self.xi = (x_brev.imag * 2 ** x_p).astype(int)  # imag fixedpoint mem
 
         w = np.exp(-2j * (np.pi / self.size) * np.arange(self.size / 2))  # only uses half circle twiddles
-        self.Wr = (w.real * 2 ** w_p).astype(int)  # real twiddle mem
-        self.wi = (w.imag * 2 ** w_p).astype(int)  # imag twiddle mem
+        self.wr = np.round((w.real * 2 ** self.w_p)).astype(int)  # real twiddle mem
+        self.wi = np.round((w.imag * 2 ** self.w_p)).astype(int)  # imag twiddle mem
 
     def full_fft(self, scaling='one', ifft=False):
         """
@@ -105,7 +105,7 @@ class FftModel:
 
     def fft_stage(self, s, ifft=False):
         """
-        perform radix2 stage with scalingon data
+        perform radix2 stage with scaling on data
 
         Parameters
         ----------
@@ -128,14 +128,13 @@ class FftModel:
             x_idx = (((i & ~q) << 1) | (i & q)) + ( 1 << self.stage)  # compute memory adress.
             ar, ai = self.xr[x_idx - (1 << self.stage)], self.xi[x_idx - (1 << self.stage)]  # mem access
             br, bi = self.xr[x_idx], self.xi[x_idx]
-            wr, wi = self.Wr[w_idx], self.wi[w_idx]
+            wr, wi = self.wr[w_idx], self.wi[w_idx]
             wi = -wi if ifft else wi  # complex conjugate for ifft
             cr, ci, dr, di = self._bfl(ar, ai, br, bi, wr, wi, self.w_p, s)  # butterfly with no scaling
             self.xr[x_idx - (1 << self.stage)], self.xi[x_idx - (1 << self.stage)] = cr, ci
             self.xr[x_idx], self.xi[x_idx] = dr, di
 
         self.stage += 1
-        stage = self.stage
         assert (np.amax(abs(self.xr)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
         assert (np.amax(abs(self.xi)) < 2 ** (self.x_bits + 1)), "OVERFLOW!"
 
@@ -179,7 +178,7 @@ class FftModel:
         di = (ai - b_w_i) >> s
         return cr, ci, dr, di
 
-    def test__bfl(self, a, b, ab_p, w, w_p):
+    def test_bfl(self, a, b, ab_p, w, w_p):
         """ quick _bfl eval with complex inputs
         
             ab_p fixed point position of a and b from LSB
@@ -198,8 +197,7 @@ class FftModel:
         print(f'c_fixed={c * 2 ** -ab_p} \t d_fixed={d * 2 ** -ab_p}')
         print(f'c_float={(b * w) + a} \t d_float={-(b * w) + a}')
 
-    @staticmethod
-    def cmult4(br, bi, wr, wi, p):
+    def cmult4(self, br, bi, wr, wi, p):
         """
         Fixedpoint complex multiplier using 4 real multipliers 
         with p bitshift truncation after the multipliers.
@@ -422,13 +420,13 @@ class FftModel:
         None.
 
         """
-        x_p = x_bits - (np.log2(size) - 1)  # nr fractional bits. log2(size) bits before point for signle tone.
-        tone = 3
+        x_p = 0 # x_bits - (np.log2(size) - 1)  # nr fractional bits. log2(size) bits before point for signle tone.
+        tone = 63
         x_f = np.zeros(size, dtype='complex')
-        x_f[tone] = 1j * ((1 << x_bits - 1) - 1) * 2 ** -x_p
+        x_f[tone] = 32767
         # single real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
 
-        self.__init__(x_f, x_p, w_bits, x_bits)
+        self.__init__(x_f, x_p, w_bits)
         x_t = (self.full_fft(scaling='one', ifft=True))
         if plot:
             plt.rc('font', size=18)
@@ -462,4 +460,4 @@ if __name__ == "__main__":
     # a.evaluate_slot(1024,24,16,'none')
     # a.evaluate_tone(1024,16,8,'one')      # very low twiddle precision! noise concentrates at harmonics
     # a.evaluate_tone(1024,16,16,'no_oflw')     # 18 fractional twiddle bits, i think I can build this with 18b wide rom
-    a.evaluate_ifft(128, 16, 16)
+    a.evaluate_ifft(128, 16, 14)

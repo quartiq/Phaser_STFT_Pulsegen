@@ -3,4 +3,7 @@
 /workspace.xml
 .idea
 FFT_playground/vcd/
-FFT_playground/test/
+FFT_dynamic_range.ipynb
+.ipynb_checkpoints/
+FFT_playground/__pycache__/
+FFT_playground/unittest.vcd

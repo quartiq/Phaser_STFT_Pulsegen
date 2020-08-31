@@ -60,7 +60,7 @@ class Fft(Module):
     """
 
     def __init__(self, n=32, ifft=False, width_i=16, width_o=16, width_int=16,
-                 width_wram=18, input_order='natural', cmult='4_dsp'):
+                 width_wram=16, input_order='natural', cmult='4_dsp'):
         # Parameters
         # =============================================================
         # TODO: Input parameter checks
@@ -152,10 +152,10 @@ class Fft(Module):
             xram1_port1.dat_w.eq(self.x_in),
             xram2a_port1.dat_w.eq(self.x_in),
             xram2b_port1.dat_w.eq(self.x_in),
-            xram1_port1.we.eq(~self.busy & self.x_in_we & inp_ram_adr[0]),
+            xram1_port1.we.eq(~self.busy & self.x_in_we & ~inp_ram_adr[0]),
             # use LSB of address to switch between rams when loading data
-            xram2a_port1.we.eq(~self.busy & self.x_in_we & ~inp_ram_adr[0]),
-            xram2b_port1.we.eq(~self.busy & self.x_in_we & ~inp_ram_adr[0]),
+            xram2a_port1.we.eq(~self.busy & self.x_in_we & inp_ram_adr[0]),
+            xram2b_port1.we.eq(~self.busy & self.x_in_we & inp_ram_adr[0]),
             ar.eq(Mux(a_mux_l == 0, xram1_port1.dat_r[:self.width_int], dat_r[:self.width_int])),
             ai.eq(Mux(a_mux_l == 0, xram1_port1.dat_r[self.width_int:], dat_r[self.width_int:])),
             br.eq(Mux(a_mux_l, xram1_port1.dat_r[:self.width_int], dat_r[:self.width_int])),
@@ -376,7 +376,7 @@ class Fft(Module):
         """ input output testbench for 128 point fft"""
         x = np.zeros(self.n)
         y = np.zeros(self.n, dtype="complex")
-        x[3] = ((1 << self.width_i - 1) - 1) << self.width_int  # shift to complex data
+        x[1] = ((1 << self.width_i - 1) - 1) << self.width_int  # shift to complex data
         # maximal single real tone at 3rd coef (without DC). shifted to mem offset for real values.
         for i, k in enumerate(x):
             binary = bin(i)
@@ -402,11 +402,11 @@ class Fft(Module):
                 xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
                 xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
                 if (xr2cpl & (1 << self.width_o - 1)):
-                    xr = xr2cpl - 2 ** self.width_o + 1
+                    xr = xr2cpl - 2 ** self.width_o
                 else:
                     xr = xr2cpl
                 if (xi2cpl & (1 << self.width_o - 1)):
-                    xi = xi2cpl - 2 ** self.width_o +1
+                    xi = xi2cpl - 2 ** self.width_o 
                 else:
                     xi = xi2cpl
                 print(f'pos:{p - 3}\treal:{xr}  \t\timag:{xi}')
@@ -430,11 +430,11 @@ class Fft(Module):
                 xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
                 xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
                 if xr2cpl & (1 << self.width_o - 1):
-                    xr = xr2cpl - 2 ** self.width_o + 1
+                    xr = xr2cpl - 2 ** self.width_o 
                 else:
                     xr = xr2cpl
                 if xi2cpl & (1 << self.width_o - 1):
-                    xi = xi2cpl - 2 ** self.width_o +1
+                    xi = xi2cpl - 2 ** self.width_o
                 else:
                     xi = xi2cpl
                 print(f'pos:{p - 3}\treal:{xr}  \t\timag:{xi}')
