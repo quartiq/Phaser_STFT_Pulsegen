@@ -30,5 +30,6 @@ jobs:
 
       - name: run unittests
         run: |
-          python -m unittest FFT_playground/test_fft.py
+          cd FFT_playground
+          python -m unittest test_fft.py
 
