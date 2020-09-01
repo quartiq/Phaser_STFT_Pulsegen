@@ -7,16 +7,17 @@ from fft_model import FftModel
 
 class TestFft(unittest.TestCase):
     def test_bitreversed(self):
-        """ bitreversed input test for 128 point fft with """
+        """ bitreversed input test for 128 point fft with randomized phases.
+
+        compares the simulation output against a bit-accurate numeric model
+        maximum amplitude input coefficients with randomized phase
+        """
         self.fft = Fft(n=128, ifft=True)
-        x = np.zeros(self.fft.n, dtype="complex")
-        x[1] = 1j * 8000
-        x[2] = -2j * 8000
-        x[3] = 1j * 8000
-        x[71] = 1j * 80
-        x[72] = -2j * 80
-        x[73] = -1 * 80
-        fft_model = FftModel(x,w_p=14)
+        x = np.ones(self.fft.n, dtype="complex")
+        ampl = 1024
+        phase = np.random.rand(self.fft.n) * 2 * np.pi
+        x = x * ampl * np.exp(1j * phase)
+        fft_model = FftModel(x, w_p=14)
         x_o_model = fft_model.full_fft(scaling='one', ifft=True)  # model output
         x_o_sim = np.zeros(self.fft.n, dtype="complex")  # simulation output
         
@@ -38,15 +39,15 @@ class TestFft(unittest.TestCase):
             for i in range(1024):
                 yield
                 yield self.fft.start.eq(0)
-                if i < self.fft.n:  # load in values
+                if i < self.fft.n:                  # load in values
                     yield self.fft.x_in_we.eq(1)
                     yield self.fft.x_in_adr.eq(i)
                     yield self.fft.x_in.eq(y[i])
-                if i == self.fft.n + 1:     # start fft
+                if i == self.fft.n + 1:             # start fft
                     yield self.fft.x_in_we.eq(0)
                     yield self.fft.start.eq(1)
                     yield self.fft.en.eq(1)
-                if (yield self.fft.done):   # retrieve ifft output
+                if (yield self.fft.done):           # retrieve ifft output
                     yield self.fft.x_out_adr.eq(p)
                     p += 1
                     xr2cpl = yield self.fft.x_out[:self.fft.width_o]  # x real in twos complement
