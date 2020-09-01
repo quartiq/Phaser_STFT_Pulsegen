@@ -14,7 +14,7 @@ class TestFft(unittest.TestCase):
         """
         self.fft = Fft(n=128, ifft=True)
         x = np.ones(self.fft.n, dtype="complex")
-        ampl = 1024
+        ampl = 2048
         phase = np.random.rand(self.fft.n) * 2 * np.pi
         x = x * ampl * np.exp(1j * phase)
         fft_model = FftModel(x, w_p=14)
