@@ -11,11 +11,11 @@ class TestFft(unittest.TestCase):
         self.fft = Fft(n=128, ifft=True)
         x = np.zeros(self.fft.n, dtype="complex")
         x[1] = 1j * 8000
-        x[64] = -2j * 8000
+        x[2] = -2j * 8000
         x[3] = 1j * 8000
         x[71] = 1j * 80
         x[72] = -2j * 80
-        x[73] = -1j * 80
+        x[73] = -1 * 80
         fft_model = FftModel(x,w_p=14)
         x_o_model = fft_model.full_fft(scaling='one', ifft=True)  # model output
         x_o_sim = np.zeros(self.fft.n, dtype="complex")  # simulation output
@@ -23,7 +23,7 @@ class TestFft(unittest.TestCase):
         x_mem = np.zeros(self.fft.n)
         y = np.zeros(self.fft.n, dtype="complex")
         for i, k in enumerate(x):
-            x_mem[i] = int(k.real) | (int(k.imag) << self.fft.width_int)  # shift imag to imag mem offset
+            x_mem[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.fft.width_int)
         for i, k in enumerate(x_mem):  # bit reverse
             binary = bin(i)
             reverse = binary[-1:1:-1]
@@ -51,11 +51,11 @@ class TestFft(unittest.TestCase):
                     p += 1
                     xr2cpl = yield self.fft.x_out[:self.fft.width_o]  # x real in twos complement
                     xi2cpl = yield self.fft.x_out[self.fft.width_o:]  # x imag in twos complement
-                    if (xr2cpl & (1 << self.fft.width_o - 1)):
+                    if xr2cpl & (1 << self.fft.width_o - 1):
                         xr = xr2cpl - 2 ** self.fft.width_o
                     else:
                         xr = xr2cpl
-                    if (xi2cpl & (1 << self.fft.width_o - 1)):
+                    if xi2cpl & (1 << self.fft.width_o - 1):
                         xi = xi2cpl - 2 ** self.fft.width_o
                     else:
                         xi = xi2cpl
