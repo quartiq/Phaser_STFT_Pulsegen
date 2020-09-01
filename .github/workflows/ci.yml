@@ -1,0 +1,36 @@
+name: Continous Integration
+
+
+on:
+  push:
+    branches: 
+      - master 
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: [3.7, 3.8]
+      
+
+    steps:
+      - uses: actions/checkout@v2
+        
+      - name: Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+       
+      - name: Install dependencies
+        run: |
+          pip install numpy
+          pip install matplotlib
+          pip install git+https://github.com/m-labs/migen.git
+          pip install git+https://github.com/m-labs/misoc.git
+
+      - name: run unittests
+        run: |
+          cd FFT_playground
+          python -m unittest test_fft.py
+
