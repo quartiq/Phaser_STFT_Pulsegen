@@ -15,6 +15,9 @@ class TestFft(unittest.TestCase):
         self.fft = Fft(n=128, ifft=True)
         x = np.ones(self.fft.n, dtype="complex")
         ampl = 2048
+        seed = np.random.randint(2 ** 32)
+        np.random.seed(seed)
+        print(f'random seed: {seed}')
         phase = np.random.rand(self.fft.n) * 2 * np.pi
         x = x * ampl * np.exp(1j * phase)
         fft_model = FftModel(x, w_p=14)
@@ -67,7 +70,7 @@ class TestFft(unittest.TestCase):
                     break
 
         run_simulation(self.fft, io_brev_tb(), vcd_name="unittest.vcd")
-
+        print(x_o_sim)
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())  # in console output second input is displayed first
 
 
