@@ -64,7 +64,6 @@ class Fft(Module):
         # Parameters
         # =============================================================
         # TODO: Input parameter checks
-
         self.n = n
         self.width_int = width_int
         self.width_i = width_i
@@ -78,12 +77,12 @@ class Fft(Module):
 
         # IO signals
         # =============================================================
-
-        self.x_in = Signal((width_i * 2, True))  # write data
+        self.x_in = Signal((self.width_i * 2, True))  # write data
         self.x_in_we = Signal()  # write enable
         self.x_in_adr = Signal(self.log2n)  # write address
-        self.x_out = Signal((width_o * 2, True))  # read data
+        self.x_out = Signal((self.width_o * 2, True))  # read data
         self.x_out_adr = Signal(self.log2n)  # read address
+        self.scaling = Signal(self.log2n)  # output scaling in powers of two
         self.start = Signal()  # input start signal
         self.busy = Signal()  # busy indicator
         self.done = Signal()  # output done signal
@@ -99,15 +98,15 @@ class Fft(Module):
         bi = Signal((self.width_int, True))
         self.stage = Signal(int(np.ceil(np.log2(self.log2n))) + 1)  # global stage counter
         self.en = Signal()  # global bfl computation enable Signal
+        self.scaling_reg = Signal(self.log2n)   # registered scaling value
+        s = Signal()  # butterfly computations output scaling signal
 
         # Instantiate Butterfly
         # =============================================================
-
-        cr, ci, dr, di = self._bfl_core(ar, ai, br, bi)
+        cr, ci, dr, di = self._bfl_core(ar, ai, br, bi, s)
 
         # Data Memories
         # =============================================================
-
         # debug: fill data memory with initial tone
         x = np.zeros(n)
         y = np.zeros(n, dtype="complex")
@@ -139,7 +138,7 @@ class Fft(Module):
 
         # Memory Wiring
         # =============================================================
-        a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we = self._data_scheduler()
+        a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w = self._data_scheduler()
 
         inp_ram_adr = Signal(self.log2n)  # physical ram adress
         last_bit_xout_adr_l = Signal()  # one clock delayed for correct output routing after ram access
@@ -183,16 +182,20 @@ class Fft(Module):
 
         # IO logic
         # =============================================================
-
         if input_order=="bitreversed":
             self.comb += [
                 inp_ram_adr.eq(self.x_in_adr),  # no bitreversing, just in order
             ]
-
         if input_order=="natural":
             self.comb += [
                 inp_ram_adr.eq(self.x_in_adr[::-1]),  # reverse bits
             ]
+
+        # scaling logic
+        # =============================================================
+        self.comb += [
+            s.eq(self.scaling_reg > stage_w),
+        ]
 
     def _data_scheduler(self):
         """data ram address and ram multiplexer scheduler."""
@@ -224,6 +227,8 @@ class Fft(Module):
                self.stage.eq(0),
                stage_w.eq(-1),  # reset to -1
                pos_r.eq(0),
+               self.scaling_reg.eq(self.log2n - self.scaling),
+               # starting at scaling_reg stage, the bfl outputs are not scaled any more.
                ),
             If(reduce(and_, pos_w) & (stage_w == self.log2n - 1),  # if at last write
                bfl_we.eq(0),
@@ -264,15 +269,15 @@ class Fft(Module):
             x1p2_adr.eq(pos_w),  # ram 1 is just always sorted
             x2p2_adr.eq(pos_w)  # ram 2 is also read in order
         ]
-        return a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we
+        return a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w
 
-    def _bfl_core(self, ar, ai, br, bi):
+    def _bfl_core(self, ar, ai, br, bi, s):
         """full butterfly core with computation pipeline, twiddle rom and twiddle address calculator."""
         w_idx = self._twiddle_addr_calc()
         wr, wi = self._twiddle_mem_gen(w_idx)
-        return self._bfl_pipe4(ar, ai, br, bi, wr, wi)
+        return self._bfl_pipe4(ar, ai, br, bi, wr, wi, s)
 
-    def _bfl_pipe4(self, ar, ai, br, bi, wr, wi):
+    def _bfl_pipe4(self, ar, ai, br, bi, wr, wi, s):
         """Butterfly computation pipe.
         1 fetching stage, 3 computation stages (with last addition and writeback in one cycle), uses 4 DSPs.
         Scaling is performed at the end of the computation.
@@ -319,10 +324,10 @@ class Fft(Module):
         ]
         self.comb += [
             # just shift by one for now
-            cr.eq(cr_full >> 1),
-            ci.eq(ci_full >> 1),
-            dr.eq(dr_full >> 1),
-            di.eq(di_full >> 1)
+            cr.eq(cr_full >> s),
+            ci.eq(ci_full >> s),
+            dr.eq(dr_full >> s),
+            di.eq(di_full >> s)
         ]
         return cr, ci, dr, di
 

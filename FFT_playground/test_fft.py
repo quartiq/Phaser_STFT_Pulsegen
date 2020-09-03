@@ -7,7 +7,7 @@ from fft_model import FftModel
 
 class TestFft(unittest.TestCase):
 
-    def run_fft_sim(self, y):
+    def run_fft_sim(self, y, scaling):
 
         x_o_sim = np.zeros(self.fft.n, dtype="complex")  # simulation output
 
@@ -25,6 +25,7 @@ class TestFft(unittest.TestCase):
                     yield self.fft.x_in_we.eq(0)
                     yield self.fft.start.eq(1)
                     yield self.fft.en.eq(1)
+                    yield self.fft.scaling.eq(scaling)
                 if (yield self.fft.done):  # retrieve ifft output
                     yield self.fft.x_out_adr.eq(p)
                     p += 1
@@ -75,7 +76,7 @@ class TestFft(unittest.TestCase):
             y[i] = x_mem[pos]
         y = y.real.astype('int').tolist()
 
-        x_o_sim = self.run_fft_sim(y)
+        x_o_sim = self.run_fft_sim(y, 0)
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 
     def test_natural(self):
@@ -97,9 +98,30 @@ class TestFft(unittest.TestCase):
         for i, k in enumerate(x):
             y[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.fft.width_int)
         y = y.real.astype('int').tolist()
-        x_o_sim = self.run_fft_sim(y)
+        x_o_sim = self.run_fft_sim(y, 0)
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 
+    def test_scaling(self):
+        """ 2**5 scaling test of fft calculation
+
+        """
+        self.fft = Fft(n=128, ifft=True, input_order='natural')
+        x = np.ones(self.fft.n, dtype="complex")
+        ampl = 2048
+        seed = np.random.randint(2 ** 32)
+        np.random.seed(seed)
+        print(f'random seed scaling: {seed}')
+        phase = np.random.rand(self.fft.n) * 2 * np.pi
+        x = x * ampl * np.exp(1j * phase)
+        fft_model = FftModel(x, w_p=14)
+        x_o_model = fft_model.full_fft(scaling='4tone_ifft', ifft=True)  # model output
+
+        y = np.zeros(self.fft.n, dtype="complex")
+        for i, k in enumerate(x):
+            y[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.fft.width_int)
+        y = y.real.astype('int').tolist()
+        x_o_sim = self.run_fft_sim(y, 5) * 2 ** -5
+        self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 
 if __name__ == '__main__':
     unittest.main()
