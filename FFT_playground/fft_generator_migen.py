@@ -184,9 +184,15 @@ class Fft(Module):
         # IO logic
         # =============================================================
 
-        self.comb += [
-            inp_ram_adr.eq(self.x_in_adr),  # no bitreversing, just in order
-        ]
+        if input_order=="bitreversed":
+            self.comb += [
+                inp_ram_adr.eq(self.x_in_adr),  # no bitreversing, just in order
+            ]
+
+        if input_order=="natural":
+            self.comb += [
+                inp_ram_adr.eq(self.x_in_adr[::-1]),  # reverse bits
+            ]
 
     def _data_scheduler(self):
         """data ram address and ram multiplexer scheduler."""
