@@ -114,7 +114,7 @@ class TestFft(unittest.TestCase):
         phase = np.random.rand(self.fft.n) * 2 * np.pi
         x = x * ampl * np.exp(1j * phase)
         fft_model = FftModel(x, w_p=14)
-        x_o_model = fft_model.full_fft(scaling='4tone_ifft', ifft=True)  # model output
+        x_o_model = fft_model.full_fft(scaling=5, ifft=True)  # model output
 
         y = np.zeros(self.fft.n, dtype="complex")
         for i, k in enumerate(x):

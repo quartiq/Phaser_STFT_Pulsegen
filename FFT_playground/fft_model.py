@@ -77,7 +77,6 @@ class FftModel:
 
         """
 
-        assert scaling in ('none', 'one', 'no_oflw', '4tone_ifft')  # check param
 
         for i in range(self.stages):
             if ifft:
@@ -100,6 +99,9 @@ class FftModel:
                     self.x_p -= 1
                 else:
                     self.fft_stage(0, ifft)
+            elif isinstance(scaling, int):
+                self.fft_stage(int(i < self.stages - scaling), ifft)
+                self.x_p -= int(i < self.stages - scaling)
 
         return self.xr * 2 ** -self.x_p + 1j * self.xi * 2 ** -self.x_p
 
