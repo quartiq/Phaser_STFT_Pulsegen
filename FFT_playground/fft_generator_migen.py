@@ -247,10 +247,9 @@ class Fft(Module):
             a_x2_mux_l.eq(a_x2_mux)
         ]
 
-        for i in range(self.log2n)[1:]:  # Mux for read position bits
-            self.comb += If(self.stage == i, posbit_r.eq(pos_r[i - 1]))
-        for i in range(self.log2n - 1):  # Mux for write position bits
-            self.comb += If(stage_w == i, posbit_w.eq(pos_w[i]))
+        self.comb += posbit_r.eq(Array(pos_r)[self.stage - 1])  # Mux for read position bits
+        self.comb += [posbit_w.eq(Array(pos_w)[stage_w]),  # Mux for write position bits
+                      If(stage_w >= self.log2n-1, posbit_w.eq(0))]
 
         self.comb += [
             # fetching logic
@@ -276,6 +275,9 @@ class Fft(Module):
         w_idx = self._twiddle_addr_calc()
         wr, wi = self._twiddle_mem_gen(w_idx)
         return self._bfl_pipe4(ar, ai, br, bi, wr, wi, s)
+
+    def _bfl_pipe_dsp_opt(self, ar, ai, br, bi, wr, wi, s):
+        pass
 
     def _bfl_pipe4(self, ar, ai, br, bi, wr, wi, s):
         """Butterfly computation pipe.
@@ -316,14 +318,13 @@ class Fft(Module):
             s2_dsp2.eq(s1_dsp2 + ((bi_reg * wr_reg) >> self.w_p)),
             ar_reg[1].eq(ar_reg[0]),
             ai_reg[1].eq(ai_reg[0]),
-            #       third stage         TODO: nonfixed scaling and overflow
+            #       third stage         TODO: overflow
             cr_full.eq(s2_dsp1 + ar_reg[1]),
             ci_full.eq(s2_dsp2 + ai_reg[1]),
             dr_full.eq(ar_reg[1] - s2_dsp1),
             di_full.eq(ai_reg[1] - s2_dsp2),
         ]
         self.comb += [
-            # just shift by one for now
             cr.eq(cr_full >> s),
             ci.eq(ci_full >> s),
             dr.eq(dr_full >> s),
