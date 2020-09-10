@@ -138,7 +138,7 @@ class Fft(Module):
 
         # Memory Wiring
         # =============================================================
-        a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w = self._data_scheduler()
+        a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w_n = self._data_scheduler()
 
         inp_ram_adr = Signal(self.log2n)  # physical ram adress
         last_bit_xout_adr_l = Signal()  # one clock delayed for correct output routing after ram access
@@ -194,7 +194,7 @@ class Fft(Module):
         # scaling logic
         # =============================================================
         self.comb += [
-            s.eq(self.scaling_reg > stage_w),
+            s.eq(self.scaling_reg > stage_w_n),  # scaling signal is needed one clk before stage transition
         ]
 
     def _data_scheduler(self):
@@ -203,6 +203,8 @@ class Fft(Module):
         pos_w = Signal(self.log2n - 1, reset=0)  # pipeline delay delayed couter
         stage_w = Signal(int(np.ceil(np.log2(self.log2n))) + 1,
                          reset=0)  # write stage position; resets to -1 at fft start
+        stage_w_n = Signal(int(np.ceil(np.log2(self.log2n))) + 1,
+                         reset=0)  # write stage position at NEXT clockcycle; resets to -1 at fft start
         a_mux = Signal()  # a ram muxing signal
         c_mux = Signal()  # c ram muxing signal
         a_mux_l = Signal()  # (last) 1 clk delayed mux; needed to route data at ram output one clk after addr was set
@@ -225,7 +227,8 @@ class Fft(Module):
                self.busy.eq(1),
                self.done.eq(0),
                self.stage.eq(0),
-               stage_w.eq(-1),  # reset to -1
+               stage_w.eq(-1),
+               stage_w_n.eq(-1),
                pos_r.eq(0),
                self.scaling_reg.eq(self.log2n - self.scaling),
                # starting at scaling_reg stage, the bfl outputs are not scaled any more.
@@ -240,6 +243,7 @@ class Fft(Module):
             If(self.en & self.busy, pos_r.eq(pos_r + 1)),  # count only if enabled; overflows at stage transition
             If(reduce(and_, pos_r), self.stage.eq(self.stage + 1)),
             If(reduce(and_, pos_w) & ~(stage_w == self.log2n - 1), stage_w.eq(stage_w + 1)),
+            If(pos_w == (int(self.n / 2) - 2), stage_w_n.eq(stage_w_n + 1)),  # grr, this is ugly
             # dont count up write pos at ultimate stage so c_x2_mux is still in the right position
             If(reduce(and_, pos_w) & reduce(and_, stage_w) & (self.busy == 1), bfl_we.eq(1)),
             # enable write on next (stage_w==0) cycle
@@ -268,16 +272,69 @@ class Fft(Module):
             x1p2_adr.eq(pos_w),  # ram 1 is just always sorted
             x2p2_adr.eq(pos_w)  # ram 2 is also read in order
         ]
-        return a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w
+        return a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w_n
 
     def _bfl_core(self, ar, ai, br, bi, s):
         """full butterfly core with computation pipeline, twiddle rom and twiddle address calculator."""
         w_idx = self._twiddle_addr_calc()
         wr, wi = self._twiddle_mem_gen(w_idx)
-        return self._bfl_pipe4(ar, ai, br, bi, wr, wi, s)
+        return self._bfl_pipe3_dsp_opt(ar, ai, br, bi, wr, wi, s)
 
-    def _bfl_pipe_dsp_opt(self, ar, ai, br, bi, wr, wi, s):
-        pass
+    def _bfl_pipe3_dsp_opt(self, ar, ai, br, bi, wr, wi, s):
+        """Butterfly computation pipe.
+        Optimized for pipelined dsp blocks. Adapted from misoc ComplexMultiplier.
+        """
+
+        self.PIPE_DELAY = 7
+
+        bias = 0  # (1 << self.width_int - 1) - 1
+
+        cr = Signal((self.width_int, True), reset_less=True)
+        ci = Signal((self.width_int, True), reset_less=True)
+        dr = Signal((self.width_int, True), reset_less=True)
+        di = Signal((self.width_int, True), reset_less=True)
+
+        ar_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(5)]
+        ai_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(5)]
+        br_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(3)]
+        bi_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(3)]
+        wr_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(2)]
+        wi_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(2)]
+        bd = Signal((self.width_int + 1, True), reset_less=True)
+        ws = Signal((self.width_int + 1, True), reset_less=True)
+        wd = Signal((self.width_int + 1, True), reset_less=True)
+        # these needs yet another (temporary) brt since the synthesizer
+        # usually doesn't prove the cancellation
+        m = [Signal((self.width_int * 2 + 1, True), reset_less=True)
+             for _ in range(8)]
+        self.sync += [
+            # 0th stage: ram access
+            Cat(ar_reg).eq(Cat(ar, ar_reg)),  # 1-5
+            Cat(ai_reg).eq(Cat(ai, ai_reg)),  # 1-5
+            Cat(br_reg).eq(Cat(br, br_reg)),  # 1-3
+            Cat(bi_reg).eq(Cat(bi, bi_reg)),  # 1-3
+            Cat(wr_reg).eq(Cat(wr, wr_reg)),  # 1-2
+            Cat(wi_reg).eq(Cat(wi, wi_reg)),  # 1-2
+            bd.eq(br + bi),  # 1
+            m[0].eq(bd * wr_reg[0]),  # 2
+            m[1].eq(m[0] + bias),  # 3
+            ws.eq(wr_reg[1] + wi_reg[1]),  # 3
+            wd.eq(wr_reg[1] - wi_reg[1]),  # 3
+            m[2].eq(ws * bi_reg[2]),  # 4
+            m[3].eq(wd * br_reg[2]),  # 4
+            m[4].eq(m[1]),  # 4
+            m[5].eq(m[1]),  # 4
+            m[6].eq(m[4] - m[2]),  # 5
+            m[7].eq(m[5] - m[3]),  # 5
+            
+            cr.eq((ar_reg[4] + m[6][self.w_p:]) >> s),  # 6
+            ci.eq((ai_reg[4] + m[7][self.w_p:]) >> s),  # 6
+            dr.eq((ar_reg[4] - m[6][self.w_p:]) >> s),  # 6
+            di.eq((ai_reg[4] - m[7][self.w_p:]) >> s),  # 6
+        ]
+
+        return cr, ci, dr, di
+
 
     def _bfl_pipe4(self, ar, ai, br, bi, wr, wi, s):
         """Butterfly computation pipe.
@@ -386,15 +443,18 @@ class Fft(Module):
 
     def io_tb(self):
         """ input output testbench for 128 point fft"""
-        x = np.zeros(self.n)
+        x = np.ones(self.n)
+        x=x*2**12
+        #x[1] = ((1 << self.width_i - 1) - 1)
+        x_mem = np.zeros(self.n)
         y = np.zeros(self.n, dtype="complex")
-        x[1] = ((1 << self.width_i - 1) - 1) << self.width_int  # shift to complex data
-        # maximal single real tone at 3rd coef (without DC). shifted to mem offset for real values.
         for i, k in enumerate(x):
+            x_mem[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.width_int)
+        for i, k in enumerate(x_mem):  # bit reverse
             binary = bin(i)
             reverse = binary[-1:1:-1]
             pos = int(reverse + (self.log2n - len(reverse)) * '0', 2)
-            y[i] = x[pos]
+            y[i] = x_mem[pos]
         y = y.real.astype('int').tolist()
         p = 0
         for i in range(1024):
@@ -403,7 +463,7 @@ class Fft(Module):
             if i < self.n:
                 yield self.x_in_we.eq(1)
                 yield self.x_in_adr.eq(i)
-                yield self.x_in.eq(y[i-1])
+                yield self.x_in.eq(y[i])
             if i == self.n+1:
                 yield self.x_in_we.eq(0)
                 yield self.start.eq(1)
@@ -456,7 +516,7 @@ class Fft(Module):
 
 
 if __name__ == "__main__":
-    test = Fft(n=128, ifft=True)
+    test = Fft(n=128, ifft=True, input_order='bitreversed')
 
     run_simulation(test, test.io_tb(), vcd_name="vcd/io.vcd")
     # run_simulation(test, test.internal_tb(), vcd_name="internal_BIG.vcd")

@@ -132,7 +132,7 @@ class FftModel:
             br, bi = self.xr[x_idx], self.xi[x_idx]
             wr, wi = self.wr[w_idx], self.wi[w_idx]
             wi = -wi if ifft else wi  # complex conjugate for ifft
-            cr, ci, dr, di = self._bfl(ar, ai, br, bi, wr, wi, self.w_p, s)  # butterfly with no scaling
+            cr, ci, dr, di = self._bfl_dsp_opt(ar, ai, br, bi, wr, wi, self.w_p, s)  # butterfly with no scaling
             self.xr[x_idx - (1 << self.stage)], self.xi[x_idx - (1 << self.stage)] = cr, ci
             self.xr[x_idx], self.xi[x_idx] = dr, di
 
@@ -144,34 +144,6 @@ class FftModel:
         """
         Fixedpoint butterfly computation with scaling.
         Parameters
-        ----------
-        ar : fixed point
-            input a real
-        ai : fixed point
-            input a imag
-        br : fixed point
-            input b real
-        bi : fixed point
-            input b imag
-        wr : fixed point 
-            twiddle factor real
-        wi : fixed point 
-            twiddle factor imag
-        p : int
-            twiddle factor length
-        s : int
-            out scale factor in bits
-
-        Returns
-        -------
-        cr : fixed point
-            output c real
-        ci : fixed point
-            output c imag
-        dr : fixed point
-            output d real
-        di : fixed point
-            output d imag
         """
         b_w_r, b_w_i = self.cmult4(br, bi, wr, wi, p)
         cr = (ar + b_w_r) >> s
@@ -179,6 +151,31 @@ class FftModel:
         dr = (ar - b_w_r) >> s
         di = (ai - b_w_i) >> s
         return cr, ci, dr, di
+
+    def _bfl_dsp_opt(self, ar, ai, br, bi, wr, wi, p, s):
+        """Butterfly computation pipe.
+        Optimized for pipelined dsp blocks. Adapted from misoc ComplexMultiplier.
+        """
+
+        bias = 0  # (1 << self.width_int - 1) - 1
+
+        bd = br + bi
+        m0 = bd * wr
+        m1 = m0 + bias
+        ws = wr + wi
+        wd = wr - wi
+        m2 = ws * bi
+        m3 = wd * br
+        m6 = m1 - m2
+        m7 = m1 - m3
+
+        cr = (ar + (m6 >> p)) >> s
+        ci = (ai + (m7 >> p)) >> s
+        dr = (ar - (m6 >> p)) >> s
+        di = (ai - (m7 >> p)) >> s
+
+        return cr, ci, dr, di
+
 
     def test_bfl(self, a, b, ab_p, w, w_p):
         """ quick _bfl eval with complex inputs
@@ -203,27 +200,6 @@ class FftModel:
         """
         Fixedpoint complex multiplier using 4 real multipliers 
         with p bitshift truncation after the multipliers.
-
-        Parameters
-        ----------
-        wr : fixed point
-            a real
-        wi : fixed point
-            a imag
-        br : fixed point
-            b real
-        bi : fixed point
-            b imag
-        p : int
-            shift
-
-        Returns
-        -------
-        cr : fixed point
-            output real
-        ci : fixed point 
-            output imag
-
         """
         br_wr = (br * wr) >> p  # b rebl times w rebl
         bi_wi = (bi * wi) >> p  # b imbg times w imbg
@@ -237,27 +213,6 @@ class FftModel:
         """
         Fixedpoint complex multiplier using 3 real multipliers
         with p bitshift truncation after the multipliers.
-
-        Parameters
-        ----------
-        ar : fixed point
-            a real
-        ai : fixed point
-            a imag
-        br : fixed point
-            b real
-        bi : fixed point
-            b imag
-        p : int
-            shift
-
-        Returns
-        -------
-        cr : fixed point
-            output real
-        ci : fixed point 
-            output imag
-
         """
         ar_br = (ar * br) >> p  # a real times b real
         ai_bi = (ai * bi) >> p  # a imag times b imag
@@ -423,13 +378,16 @@ class FftModel:
 
         """
         x_p = 0 # x_bits - (np.log2(size) - 1)  # nr fractional bits. log2(size) bits before point for signle tone.
-        tone = 63
+        tone = 1
         x_f = np.zeros(size, dtype='complex')
         x_f[tone] = 32767
         # single real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
-
+        x = np.ones(size)
+        x = x * 2 ** 12
+        x_f=x
         self.__init__(x_f, x_p, w_bits)
         x_t = (self.full_fft(scaling='one', ifft=True))
+        print(x_t)
         if plot:
             plt.rc('font', size=18)
             fig, ax = plt.subplots(1, 2, figsize=(15, 5))
