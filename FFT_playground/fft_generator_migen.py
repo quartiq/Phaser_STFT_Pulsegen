@@ -24,10 +24,9 @@ class Fft(Module):
         Butterfly core:
         The butterfly core contains the pipelined computation datapath, the twiddle memory,
         twiddle decoder and twiddle address calculator. Complex multiplication is implemented
-        with a focus on accuracy using 4 real multipliers and adders. The core is fully pipelined,
-        ingesting two inputs and emitting two outputs at every clockcycle. The computation
-        pipeline has 3 stages and fetching takes one cycle. Writeback happens in the same cycle
-        as the last computation.
+        3 real multipliers and adders with rounding and scaling at the end. The core is fully pipelined,
+        ingesting two inputs and emitting two outputs at every clockcycle. TODO: exact pipe length.
+        Writeback happens in the same cycle as the last computation.
 
         Twiddle Factors:
         The Twiddle factors are basically just points on the unit circle. Due to symmetries
@@ -43,8 +42,11 @@ class Fft(Module):
         expendable).
         There are better but more complicated memory schemes that don't require double buffering.
 
-        TODO: Scaling:
-
+        Scaling:
+        Scaling is provided in powers of two by the scaling input which gets registered at fft.start.
+        The bfl stages will scale by one bit until the bitgrowth from the following stages will
+        lead to the desired output scaling. See model for effect on core accuracy.
+        e.g.: scaling = 5 --> output will be scaled by 2 ** 5
 
 
         Parameters
@@ -284,7 +286,6 @@ class Fft(Module):
         """Butterfly computation pipe.
         Optimized for pipelined dsp blocks. Adapted from misoc ComplexMultiplier.
         """
-
         self.PIPE_DELAY = 7
 
         bias = 0  # (1 << self.width_int - 1) - 1
