@@ -19,18 +19,11 @@ class Phaser_STFT(Module):
         outp = platform.request("test_point", 1)
         inp = platform.request("test_point", 0)
         sr = Signal(32)
-        self.comb += [
-            self.fft.x_in.eq(sr),
-            self.fft.x_in_we.eq(sr),
-            self.fft.x_in_adr.eq(sr),
-            self.fft.start.eq(sr),
-            self.fft.x_out_adr.eq(sr),
+        self.sync += [
+            Cat(self.fft.x_in, self.fft.x_in_we, self.fft.x_in_adr, self.fft.start, self.fft.x_out_adr).eq(Cat(self.fft.x_in, self.fft.x_in_we, self.fft.x_in_adr, self.fft.start, self.fft.x_out_adr, inp)),
             outp.eq(self.fft.x_out == 1)
         ]
 
-        self.sync += [
-            Cat(sr).eq(Cat(sr,inp))
-        ]
 
 
 
