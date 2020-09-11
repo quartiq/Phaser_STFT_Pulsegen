@@ -289,7 +289,7 @@ class Fft(Module):
         """Butterfly computation pipe.
         Optimized for pipelined dsp blocks. Adapted from misoc ComplexMultiplier.
         """
-        self.PIPE_DELAY = 7
+        self.PIPE_DELAY = 8
 
         bias = 0  # (1 << self.width_int - 1) - 1
 
@@ -298,12 +298,12 @@ class Fft(Module):
         dr = Signal((self.width_int, True), reset_less=True)
         di = Signal((self.width_int, True), reset_less=True)
 
-        ar_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(5)]
-        ai_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(5)]
-        br_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(3)]
-        bi_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(3)]
-        wr_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(2)]
-        wi_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(2)]
+        ar_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(6)]
+        ai_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(6)]
+        br_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(4)]
+        bi_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(4)]
+        wr_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(3)]
+        wi_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(3)]
         bd = Signal((self.width_int + 1, True), reset_less=True)
         ws = Signal((self.width_int + 1, True), reset_less=True)
         wd = Signal((self.width_int + 1, True), reset_less=True)
@@ -313,28 +313,28 @@ class Fft(Module):
              for _ in range(8)]
         self.sync += [
             # 0th stage: ram access
-            Cat(ar_reg).eq(Cat(ar, ar_reg)),  # 1-5
-            Cat(ai_reg).eq(Cat(ai, ai_reg)),  # 1-5
-            Cat(br_reg).eq(Cat(br, br_reg)),  # 1-3
-            Cat(bi_reg).eq(Cat(bi, bi_reg)),  # 1-3
-            Cat(wr_reg).eq(Cat(wr, wr_reg)),  # 1-2
-            Cat(wi_reg).eq(Cat(wi, wi_reg)),  # 1-2
-            bd.eq(br + bi),  # 1
-            m[0].eq(bd * wr_reg[0]),  # 2
-            m[1].eq(m[0] + bias),  # 3
-            ws.eq(wr_reg[1] + wi_reg[1]),  # 3
-            wd.eq(wr_reg[1] - wi_reg[1]),  # 3
-            m[2].eq(ws * bi_reg[2]),  # 4
-            m[3].eq(wd * br_reg[2]),  # 4
-            m[4].eq(m[1]),  # 4
-            m[5].eq(m[1]),  # 4
-            m[6].eq(m[4] - m[2]),  # 5
-            m[7].eq(m[5] - m[3]),  # 5
+            Cat(ar_reg).eq(Cat(ar, ar_reg)),  # 1
+            Cat(ai_reg).eq(Cat(ai, ai_reg)),  # 1
+            Cat(br_reg).eq(Cat(br, br_reg)),  # 1
+            Cat(bi_reg).eq(Cat(bi, bi_reg)),  # 1
+            Cat(wr_reg).eq(Cat(wr, wr_reg)),  # 1
+            Cat(wi_reg).eq(Cat(wi, wi_reg)),  # 1
+            bd.eq(br_reg[0] + bi_reg[0]),  # 2
+            m[0].eq(bd * wr_reg[1]),  # 3
+            m[1].eq(m[0] + bias),  # 4
+            ws.eq(wr_reg[2] + wi_reg[2]),  # 4
+            wd.eq(wr_reg[2] - wi_reg[2]),  # 4
+            m[2].eq(ws * bi_reg[3]),  # 5
+            m[3].eq(wd * br_reg[3]),  # 5
+            m[4].eq(m[1]),  # 5
+            m[5].eq(m[1]),  # 5
+            m[6].eq(m[4] - m[2]),  # 6
+            m[7].eq(m[5] - m[3]),  # 6
             
-            cr.eq((ar_reg[4] + m[6][self.w_p:]) >> s),  # 6
-            ci.eq((ai_reg[4] + m[7][self.w_p:]) >> s),  # 6
-            dr.eq((ar_reg[4] - m[6][self.w_p:]) >> s),  # 6
-            di.eq((ai_reg[4] - m[7][self.w_p:]) >> s),  # 6
+            cr.eq((ar_reg[5] + m[6][self.w_p:]) >> s),  # 7
+            ci.eq((ai_reg[5] + m[7][self.w_p:]) >> s),  # 7
+            dr.eq((ar_reg[5] - m[6][self.w_p:]) >> s),  # 7
+            di.eq((ai_reg[5] - m[7][self.w_p:]) >> s),  # 7
         ]
 
         return cr, ci, dr, di
