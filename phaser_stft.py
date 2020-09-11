@@ -3,7 +3,7 @@ from migen import *
 from misoc.cores.spi2 import SPIMachine, SPIInterface
 from misoc.cores.duc import PhasedDUC
 
-from .FFT_playground.fft_generator_migen import Fft
+from FFT_playground.fft_generator_migen import Fft
 from crg import CRG
 
 
@@ -21,9 +21,9 @@ class Phaser_STFT(Module):
         sr = Signal(32)
         self.comb += [
             self.fft.x_in.eq(sr),
-            self.fft.x_in_we(sr),
+            self.fft.x_in_we.eq(sr),
             self.fft.x_in_adr.eq(sr),
-            self.fft.start(sr),
+            self.fft.start.eq(sr),
             self.fft.x_out_adr.eq(sr),
             outp.eq(self.fft.x_out == 1)
         ]
