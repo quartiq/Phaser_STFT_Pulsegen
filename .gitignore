@@ -4,3 +4,5 @@ FFT_dynamic_range.ipynb
 .ipynb_checkpoints/
 FFT_playground/__pycache__/
 FFT_playground/unittest.vcd
+__pycache__/
+phaser

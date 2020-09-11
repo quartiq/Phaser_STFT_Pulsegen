@@ -62,7 +62,7 @@ class Fft(Module):
     """
 
     def __init__(self, n=32, ifft=False, width_i=16, width_o=16, width_int=16,
-                 width_wram=16, input_order='natural', cmult='4_dsp'):
+                 width_wram=16, input_order='natural', cmult='dsp_opt'):
         # Parameters
         # =============================================================
         # TODO: Input parameter checks
@@ -280,7 +280,10 @@ class Fft(Module):
         """full butterfly core with computation pipeline, twiddle rom and twiddle address calculator."""
         w_idx = self._twiddle_addr_calc()
         wr, wi = self._twiddle_mem_gen(w_idx)
-        return self._bfl_pipe3_dsp_opt(ar, ai, br, bi, wr, wi, s)
+        if self.cmult=='dsp_opt':
+            return self._bfl_pipe3_dsp_opt(ar, ai, br, bi, wr, wi, s)
+        else:
+            return self._bfl_pipe4(ar, ai, br, bi, wr, wi, s)
 
     def _bfl_pipe3_dsp_opt(self, ar, ai, br, bi, wr, wi, s):
         """Butterfly computation pipe.
