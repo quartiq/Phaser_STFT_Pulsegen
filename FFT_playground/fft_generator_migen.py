@@ -291,7 +291,7 @@ class Fft(Module):
         """
         self.PIPE_DELAY = 8
 
-        bias = 0  # (1 << self.width_int - 1) - 1
+        bias = (1 << self.w_p - 1) - 1
 
         cr = Signal((self.width_int, True), reset_less=True)
         ci = Signal((self.width_int, True), reset_less=True)

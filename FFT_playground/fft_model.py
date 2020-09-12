@@ -157,7 +157,7 @@ class FftModel:
         Optimized for pipelined dsp blocks. Adapted from misoc ComplexMultiplier.
         """
 
-        bias = 0  # (1 << self.width_int - 1) - 1
+        bias = (1 << p - 1) - 1
 
         bd = br + bi
         m0 = bd * wr
@@ -382,11 +382,8 @@ class FftModel:
         x_f = np.zeros(size, dtype='complex')
         x_f[tone] = 32767
         # single real tone at tone with max input ampl. will lead to and real cosine and complex sine in time domain
-        x = np.ones(size)
-        x = x * 2 ** 12
-        x_f=x
         self.__init__(x_f, x_p, w_bits)
-        x_t = (self.full_fft(scaling='one', ifft=True))
+        x_t = (self.full_fft(scaling='none', ifft=True))
         print(x_t)
         if plot:
             plt.rc('font', size=18)
