@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-
 # SingularitySurfer 2020
 
 
@@ -24,9 +20,10 @@ class Fft(Module):
         Butterfly core:
         The butterfly core contains the pipelined computation datapath, the twiddle memory,
         twiddle decoder and twiddle address calculator. Complex multiplication is implemented
-        3 real multipliers and adders with rounding and scaling at the end. The core is fully pipelined,
-        ingesting two inputs and emitting two outputs at every clockcycle. TODO: exact pipe length.
-        Writeback happens in the same cycle as the last computation.
+        3 DSPs and adders with rounding and scaling at the end. The core is fully pipelined,
+        ingesting two inputs and emitting two outputs at every clockcycle. The full pipeline
+        length with registered ram output is 8 cycles. Writeback happens in the same cycle as
+        the last computation.
 
         Twiddle Factors:
         The Twiddle factors are basically just points on the unit circle. Due to symmetries
@@ -43,10 +40,12 @@ class Fft(Module):
         There are better but more complicated memory schemes that don't require double buffering.
 
         Scaling:
-        Scaling is provided in powers of two by the scaling input which gets registered at fft.start.
-        The bfl stages will scale by one bit until the bitgrowth from the following stages will
-        lead to the desired output scaling. See model for effect on core accuracy.
-        e.g.: scaling = 5 --> output will be scaled by 2 ** 5
+        Scaling is provided via a scaling bitmask with length nr. stages. If the bitmask is all
+        zeros the output of every bfl stage will be scaled by one resulting in the default 1/N factor.
+        If the bitmask is 1 at the current stage the output will NOT be scaled and therefore
+        grow by one bit. The overall fft is therefore scaled by 2^(zeros in bitmask).
+        Bitgrowth is usually preferred at the first stages so the errors dont get multiplied
+        by later stages. This can lead to overflow if the coeffs are not well understood!
 
 
         Parameters
@@ -84,7 +83,7 @@ class Fft(Module):
         self.x_in_adr = Signal(self.log2n)  # write address
         self.x_out = Signal((self.width_o * 2, True))  # read data
         self.x_out_adr = Signal(self.log2n)  # read address
-        self.scaling = Signal(self.log2n)  # output scaling in powers of two
+        self.scaling = Signal(self.log2n)  # scaling mask
         self.start = Signal()  # input start signal
         self.busy = Signal()  # busy indicator
         self.done = Signal()  # output done signal
@@ -196,7 +195,7 @@ class Fft(Module):
         # scaling logic
         # =============================================================
         self.comb += [
-            s.eq(self.scaling_reg > stage_w_n),  # scaling signal is needed one clk before stage transition
+            s.eq(~Array(self.scaling_reg)[stage_w_n]),  # scaling signal is needed one clk before stage transition
         ]
 
     def _data_scheduler(self):
@@ -232,7 +231,7 @@ class Fft(Module):
                stage_w.eq(-1),
                stage_w_n.eq(-1),
                pos_r.eq(0),
-               self.scaling_reg.eq(self.log2n - self.scaling),
+               self.scaling_reg.eq(self.scaling),
                # starting at scaling_reg stage, the bfl outputs are not scaled any more.
                ),
             If(reduce(and_, pos_w) & (stage_w == self.log2n - 1),  # if at last write
@@ -280,7 +279,7 @@ class Fft(Module):
         """full butterfly core with computation pipeline, twiddle rom and twiddle address calculator."""
         w_idx = self._twiddle_addr_calc()
         wr, wi = self._twiddle_mem_gen(w_idx)
-        if self.cmult=='dsp_opt':
+        if self.cmult == 'dsp_opt':
             return self._bfl_pipe3_dsp_opt(ar, ai, br, bi, wr, wi, s)
         else:
             return self._bfl_pipe4(ar, ai, br, bi, wr, wi, s)
@@ -447,9 +446,8 @@ class Fft(Module):
 
     def io_tb(self):
         """ input output testbench for 128 point fft"""
-        x = np.ones(self.n)
-        x=x*2**12
-        #x[1] = ((1 << self.width_i - 1) - 1)
+        x = np.zeros(self.n)
+        x[1] = ((1 << self.width_i - 1) - 1)
         x_mem = np.zeros(self.n)
         y = np.zeros(self.n, dtype="complex")
         for i, k in enumerate(x):
@@ -471,6 +469,7 @@ class Fft(Module):
             if i == self.n+1:
                 yield self.x_in_we.eq(0)
                 yield self.start.eq(1)
+                yield self.scaling.eq(0),#int('1111111',2))
                 yield self.en.eq(1)
             if (yield self.done):
                 yield self.x_out_adr.eq(p)

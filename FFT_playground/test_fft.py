@@ -99,8 +99,8 @@ class TestFft(unittest.TestCase):
         """ 2**5 scaling test of fft calculation"""
         self.fft = Fft(n=128, ifft=True, input_order='natural')
         fft_model = FftModel(self.x, w_p=14)
-        x_o_model = fft_model.full_fft(scaling=5, ifft=True)
+        x_o_model = fft_model.full_fft(scaling=int('0011101', 2), ifft=True)
         y = prep_mem(self.x, self.fft.width_int)
-        x_o_sim = self.run_fft_sim(y, 5) * 2 ** -5
+        x_o_sim = self.run_fft_sim(y, int('0011101', 2)) * 2 ** -4
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 

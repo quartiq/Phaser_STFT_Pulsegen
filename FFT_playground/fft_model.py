@@ -100,8 +100,8 @@ class FftModel:
                 else:
                     self.fft_stage(0, ifft)
             elif isinstance(scaling, int):
-                self.fft_stage(int(i < self.stages - scaling), ifft)
-                self.x_p -= int(i < self.stages - scaling)
+                self.fft_stage(int((1 << i) & scaling != 1 << i), ifft)
+                self.x_p -= int((1 << i) & scaling != 1 << i)
 
         return self.xr * 2 ** -self.x_p + 1j * self.xi * 2 ** -self.x_p
 
