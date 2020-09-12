@@ -61,23 +61,19 @@ class Fft(Module):
     """
 
     def __init__(self, n=32, ifft=False, width_i=16, width_o=16, width_int=16,
-                 width_wram=16, input_order='natural', cmult='dsp_opt'):
+                 width_wram=16, input_bitreversed=False):
         # Parameters
-        # =============================================================
-        # TODO: Input parameter checks
         self.n = n
         self.width_int = width_int
         self.width_i = width_i
         self.width_o = width_o
         self.width_wram = width_wram
-        self.cmult = cmult
         self.ifft = ifft
         m = np.log2(n)
         assert m % 1 == 0, "input vector length needs to be power of two long"
         self.log2n = int(m)
 
-        # IO signals
-        # =============================================================
+        ### IO signals
         self.x_in = Signal((self.width_i * 2, True))  # write data
         self.x_in_we = Signal()  # write enable
         self.x_in_adr = Signal(self.log2n)  # write address
@@ -87,12 +83,9 @@ class Fft(Module):
         self.start = Signal()  # input start signal
         self.busy = Signal()  # busy indicator
         self.done = Signal()  # output done signal
-        self.oflw = Signal()  # overflow indicator
-
         ###
 
         # internal Signals
-        # =============================================================
         ar = Signal((self.width_int, True))
         ai = Signal((self.width_int, True))
         br = Signal((self.width_int, True))
@@ -103,29 +96,12 @@ class Fft(Module):
         s = Signal()  # butterfly computations output scaling signal
 
         # Instantiate Butterfly
-        # =============================================================
         cr, ci, dr, di = self._bfl_core(ar, ai, br, bi, s)
 
         # Data Memories
-        # =============================================================
-        # debug: fill data memory with initial tone
-        x = np.zeros(n)
-        y = np.zeros(n, dtype="complex")
-        x[3] = ((1 << self.width_i - 1) - 1) << self.width_int  # shift to complex data
-        # maximal single real tone at 3rd coef (without DC). shifted to mem offset for real values.
-        for i, k in enumerate(x):
-            binary = bin(i)
-            reverse = binary[-1:1:-1]
-            pos = int(reverse + (self.log2n - len(reverse)) * '0', 2)
-            y[i] = x[pos]
-        # Y=np.arange(0,self.n)
-        # Y=Y|(-Y)<<self.width_i
-        tempmem1 = y[::2].real.astype('int').tolist()
-        tempmem2 = y[1::2].real.astype('int').tolist()
-
-        xram1 = Memory(width_int * 2, int(n / 2), init=tempmem1, name="data1")
-        xram2a = Memory(width_int * 2, int(n / 2), init=tempmem2, name="data2a")
-        xram2b = Memory(width_int * 2, int(n / 2), init=tempmem2, name="data2b")
+        xram1 = Memory(width_int * 2, int(n / 2),name="data1")
+        xram2a = Memory(width_int * 2, int(n / 2),name="data2a")
+        xram2b = Memory(width_int * 2, int(n / 2),name="data2b")
         xram1_port1 = xram1.get_port(write_capable=True, mode=WRITE_FIRST)
         xram1_port2 = xram1.get_port(write_capable=True)
         xram2a_port1 = xram2a.get_port(write_capable=True, mode=WRITE_FIRST)
@@ -133,19 +109,17 @@ class Fft(Module):
         xram2b_port1 = xram2b.get_port(write_capable=True, mode=WRITE_FIRST)
         xram2b_port2 = xram2b.get_port(write_capable=True)
         dat_r = Signal(width_int * 2)
-
         self.specials += xram1, xram1_port1, xram1_port2, xram2a, \
                          xram2b, xram2a_port1, xram2a_port2, xram2b_port1, xram2b_port2
 
         # Memory Wiring
-        # =============================================================
-        a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w_n = self._data_scheduler()
+        a_mux_l, c_mux, a_x2_mux_l, c_x2_mux, x1p1_adr, x1p2_adr, x2p1_adr, x2p2_adr, bfl_we, stage_w_n \
+            = self._data_scheduler()
 
         inp_ram_adr = Signal(self.log2n)  # physical ram adress
         last_bit_xout_adr_l = Signal()  # one clock delayed for correct output routing after ram access
 
         self.comb += [  # fetching/loading ports
-
             xram1_port1.adr.eq(Mux(self.busy, x1p1_adr, inp_ram_adr[1:])),
             xram2a_port1.adr.eq(Mux(self.busy, x2p1_adr, inp_ram_adr[1:])),
             xram2b_port1.adr.eq(Mux(self.busy, x2p1_adr, inp_ram_adr[1:])),
@@ -176,24 +150,21 @@ class Fft(Module):
             xram2a_port2.dat_w.eq(Cat(Mux(c_mux, cr, dr), Mux(c_mux, ci, di))),
             xram2b_port2.dat_w.eq(Cat(Mux(c_mux, cr, dr), Mux(c_mux, ci, di))),
         ]
-
         self.sync += [
             last_bit_xout_adr_l.eq(self.x_out_adr[-1])  # delay by one clk
         ]
 
         # IO logic
-        # =============================================================
-        if input_order=="bitreversed":
+        if input_bitreversed == True:
             self.comb += [
                 inp_ram_adr.eq(self.x_in_adr),  # no bitreversing, just in order
             ]
-        if input_order=="natural":
+        else:
             self.comb += [
                 inp_ram_adr.eq(self.x_in_adr[::-1]),  # reverse bits
             ]
 
         # scaling logic
-        # =============================================================
         self.comb += [
             s.eq(~Array(self.scaling_reg)[stage_w_n]),  # scaling signal is needed one clk before stage transition
         ]
@@ -279,24 +250,18 @@ class Fft(Module):
         """full butterfly core with computation pipeline, twiddle rom and twiddle address calculator."""
         w_idx = self._twiddle_addr_calc()
         wr, wi = self._twiddle_mem_gen(w_idx)
-        if self.cmult == 'dsp_opt':
-            return self._bfl_pipe3_dsp_opt(ar, ai, br, bi, wr, wi, s)
-        else:
-            return self._bfl_pipe4(ar, ai, br, bi, wr, wi, s)
+        return self._bfl_pipe3_dsp_opt(ar, ai, br, bi, wr, wi, s)
 
     def _bfl_pipe3_dsp_opt(self, ar, ai, br, bi, wr, wi, s):
         """Butterfly computation pipe.
-        Optimized for pipelined dsp blocks. Adapted from misoc ComplexMultiplier.
+        Optimized for pipelined dsp blocks. Adapted from misoc duc ComplexMultiplier.
         """
         self.PIPE_DELAY = 8
-
         bias = (1 << self.w_p - 1) - 1
-
         cr = Signal((self.width_int, True), reset_less=True)
         ci = Signal((self.width_int, True), reset_less=True)
         dr = Signal((self.width_int, True), reset_less=True)
         di = Signal((self.width_int, True), reset_less=True)
-
         ar_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(6)]
         ai_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(6)]
         br_reg = [Signal((self.width_int, True), reset_less=True) for _ in range(4)]
@@ -306,8 +271,6 @@ class Fft(Module):
         bd = Signal((self.width_int + 1, True), reset_less=True)
         ws = Signal((self.width_int + 1, True), reset_less=True)
         wd = Signal((self.width_int + 1, True), reset_less=True)
-        # these needs yet another (temporary) brt since the synthesizer
-        # usually doesn't prove the cancellation
         m = [Signal((self.width_int * 2 + 1, True), reset_less=True)
              for _ in range(8)]
         self.sync += [
@@ -329,72 +292,15 @@ class Fft(Module):
             m[5].eq(m[1]),  # 5
             m[6].eq(m[4] - m[2]),  # 6
             m[7].eq(m[5] - m[3]),  # 6
-            
             cr.eq((ar_reg[5] + m[6][self.w_p:]) >> s),  # 7
             ci.eq((ai_reg[5] + m[7][self.w_p:]) >> s),  # 7
             dr.eq((ar_reg[5] - m[6][self.w_p:]) >> s),  # 7
             di.eq((ai_reg[5] - m[7][self.w_p:]) >> s),  # 7
         ]
-
-        return cr, ci, dr, di
-
-
-    def _bfl_pipe4(self, ar, ai, br, bi, wr, wi, s):
-        """Butterfly computation pipe.
-        1 fetching stage, 3 computation stages (with last addition and writeback in one cycle), uses 4 DSPs.
-        Scaling is performed at the end of the computation.
-        """
-        self.PIPE_DELAY = 4
-        s1_dsp1 = Signal((self.width_int, True))
-        s1_dsp2 = Signal((self.width_int, True))
-        wi_reg = Signal((self.width_wram, True))
-        wr_reg = Signal((self.width_wram, True))
-        bi_reg = Signal((self.width_int, True))
-        ar_reg = [Signal((self.width_int + 1, True)) for i in range(2)]
-        ai_reg = [Signal((self.width_int + 1, True)) for i in range(2)]
-        s2_dsp1 = Signal((self.width_int + 1, True))
-        s2_dsp2 = Signal((self.width_int + 1, True))
-        cr_full = Signal((self.width_int + 2, True))
-        ci_full = Signal((self.width_int + 2, True))
-        dr_full = Signal((self.width_int + 2, True))
-        di_full = Signal((self.width_int + 2, True))
-        cr = Signal((self.width_int, True))
-        ci = Signal((self.width_int, True))
-        dr = Signal((self.width_int, True))
-        di = Signal((self.width_int, True))
-        self.sync += [
-            #       (zeroth stage: fetching)
-
-            #       first stage
-            s1_dsp1.eq((br * wr) >> self.w_p),
-            s1_dsp2.eq((br * wi) >> self.w_p),
-            wi_reg.eq(wi),
-            wr_reg.eq(wr),
-            bi_reg.eq(bi),
-            ar_reg[0].eq(ar),
-            ai_reg[0].eq(ai),
-            #       second stage
-            s2_dsp1.eq(s1_dsp1 - ((bi_reg * wi_reg) >> self.w_p)),
-            s2_dsp2.eq(s1_dsp2 + ((bi_reg * wr_reg) >> self.w_p)),
-            ar_reg[1].eq(ar_reg[0]),
-            ai_reg[1].eq(ai_reg[0]),
-            #       third stage         TODO: overflow
-            cr_full.eq(s2_dsp1 + ar_reg[1]),
-            ci_full.eq(s2_dsp2 + ai_reg[1]),
-            dr_full.eq(ar_reg[1] - s2_dsp1),
-            di_full.eq(ai_reg[1] - s2_dsp2),
-        ]
-        self.comb += [
-            cr.eq(cr_full >> s),
-            ci.eq(ci_full >> s),
-            dr.eq(dr_full >> s),
-            di.eq(di_full >> s)
-        ]
         return cr, ci, dr, di
 
     def _twiddle_mem_gen(self, w_idx):
-        """generates twiddle rom and logic for assembling the twiddles from one quater circle"""
-
+        """generates twiddle rom and logic for assembling the twiddles from one quarter circle"""
         pos = np.linspace(0, np.pi / 2, int(self.n / 4), False)
         self.w_p = self.width_wram - 2  # Fixed point position of twiddles. One bit is sign and one is nonfractional (ie 1 at the 0th twiddle)
         twiddles = [(int(_.real) | int(_.imag) << self.width_wram)
@@ -429,20 +335,10 @@ class Fft(Module):
         """ calculates address for twiddle rotator """
         w_idx = Signal(self.log2n - 1, reset=0)
         step = Signal(self.log2n)  # make one bigger than w_idx to have overflow every step in 0th stage
-
-        for i in range(self.log2n):  # Makeshift Mux
+        for i in range(self.log2n):
             self.comb += If(self.stage == i, step.eq(1 << (self.log2n - i - 1)))
-
         self.sync += If(self.en, w_idx.eq(w_idx + step))
         return w_idx
-
-    def internal_tb(self):
-        """ basic testbench for ifft with fixed ram pre-initialization """
-        for i in range(1024):
-            yield
-            if i == 1:
-                yield self.start.eq(1)
-                yield self.en.eq(1)
 
     def io_tb(self):
         """ input output testbench for 128 point fft"""
@@ -469,7 +365,6 @@ class Fft(Module):
             if i == self.n+1:
                 yield self.x_in_we.eq(0)
                 yield self.start.eq(1)
-                yield self.scaling.eq(0),#int('1111111',2))
                 yield self.en.eq(1)
             if (yield self.done):
                 yield self.x_out_adr.eq(p)
@@ -489,41 +384,6 @@ class Fft(Module):
             if p >= (self.n+2):
                 break
 
-    def out_tb(self):
-        """ fft output testbench """
-        p = 0
-        for i in range(1024):
-            if i == 1:
-                yield self.start.eq(1)
-                yield self.en.eq(1)
-            else:
-                yield self.start.eq(0)
-            yield
-            if (yield self.done):
-                yield self.x_out_adr.eq(p)
-                p += 1
-                xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
-                xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
-                if xr2cpl & (1 << self.width_o - 1):
-                    xr = xr2cpl - 2 ** self.width_o 
-                else:
-                    xr = xr2cpl
-                if xi2cpl & (1 << self.width_o - 1):
-                    xi = xi2cpl - 2 ** self.width_o
-                else:
-                    xi = xi2cpl
-                print(f'pos:{p - 3}\treal:{xr}  \t\timag:{xi}')
-
-            if p >= 130:
-                break
-
-
 if __name__ == "__main__":
     test = Fft(n=128, ifft=True, input_order='bitreversed')
-
     run_simulation(test, test.io_tb(), vcd_name="vcd/io.vcd")
-    # run_simulation(test, test.internal_tb(), vcd_name="internal_BIG.vcd")
-    # run_simulation(test, test.out_tb(), vcd_name="out.vcd")
-    # run_simulation(test, test.twiddle_tb(), vcd_name="twiddle.vcd")
-    # run_simulation(test, test.bfl_tb(), vcd_name="bfl.vcd")
-    # print(o.main_source)
