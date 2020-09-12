@@ -5,14 +5,44 @@ from fft_generator_migen import Fft
 from fft_model import FftModel
 
 
+def prep_mem(x, width):
+    """combine real and imag part for simulation input"""
+    y = np.zeros(len(x), dtype="complex")
+    for i, k in enumerate(x):
+        y[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << width)
+    return y.real.astype('int').tolist()
+
+
+def bit_rev(x):
+    """bit reverse"""
+    y = np.zeros(len(x), dtype="complex")
+    for i, k in enumerate(x):  # bit reverse
+        binary = bin(i)
+        reverse = binary[-1:1:-1]
+        pos = int(reverse + (int(np.log2(len(x))) - len(reverse)) * '0', 2)
+        y[i] = x[pos]
+    return y
+
+
 class TestFft(unittest.TestCase):
+    """All tests compare the simulation output against a bit-accurate numeric model with
+    maximum amplitude input coefficients and randomized phase"""
+
+    def setUp(self):
+        seed = np.random.randint(2 ** 32)
+        np.random.seed(seed)
+        print(f'random seed: {seed}')
+        self.ampl=2048
+        self.n = 128
+        self.x = np.ones(self.n, dtype="complex")
+        phase = np.random.rand(self.n) * 2 * np.pi
+        self.x = self.x * self.ampl * np.exp(1j * phase)
 
     def run_fft_sim(self, y, scaling):
-
         x_o_sim = np.zeros(self.fft.n, dtype="complex")  # simulation output
 
-        def io_tb():
-            """ input output testbench for 128 point fft"""
+        def fft_sim():
+            """input output testbench for 128 point fft"""
             p = 0
             for i in range(1024):
                 yield
@@ -41,87 +71,36 @@ class TestFft(unittest.TestCase):
                         xi = xi2cpl
                     if p >= 3:
                         x_o_sim[p - 3] = xr + 1j * xi
-
                 if p >= (self.fft.n + 2):
                     break
-
-        run_simulation(self.fft, io_tb())
+        run_simulation(self.fft, fft_sim())
         return x_o_sim
 
     def test_bitreversed(self):
-        """ bitreversed input test for 128 point fft with randomized phases.
-
-        compares the simulation output against a bit-accurate numeric model
-        maximum amplitude input coefficients with randomized phase
-        """
+        """ bitreversed input test for 128 point fft with randomized phases."""
         self.fft = Fft(n=128, ifft=True, input_order='bitreversed')
-        x = np.ones(self.fft.n, dtype="complex")
-        ampl = 2048
-        seed = np.random.randint(2 ** 32)
-        np.random.seed(seed)
-        print(f'random seed bitreversed: {seed}')
-        phase = np.random.rand(self.fft.n) * 2 * np.pi
-        x = x * ampl * np.exp(1j * phase)
-        fft_model = FftModel(x, w_p=14)
-        x_o_model = fft_model.full_fft(scaling='one', ifft=True)  # model output
-        
-        x_mem = np.zeros(self.fft.n)
-        y = np.zeros(self.fft.n, dtype="complex")
-        for i, k in enumerate(x):
-            x_mem[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.fft.width_int)
-        for i, k in enumerate(x_mem):  # bit reverse
-            binary = bin(i)
-            reverse = binary[-1:1:-1]
-            pos = int(reverse + (self.fft.log2n - len(reverse)) * '0', 2)
-            y[i] = x_mem[pos]
-        y = y.real.astype('int').tolist()
-
+        fft_model = FftModel(self.x, w_p=14)
+        x_o_model = fft_model.full_fft(scaling='one', ifft=True)
+        y = bit_rev(self.x)
+        y = prep_mem(y, self.fft.width_int)
         x_o_sim = self.run_fft_sim(y, 0)
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 
     def test_natural(self):
-        """ natural order input test for 128 point fft
-
-        """
+        """ natural order input test for 128 point fft"""
         self.fft = Fft(n=128, ifft=True, input_order='natural')
-        x = np.ones(self.fft.n, dtype="complex")
-        ampl = 2048
-        seed = np.random.randint(2 ** 32)
-        np.random.seed(seed)
-        print(f'random seed natural: {seed}')
-        phase = np.random.rand(self.fft.n) * 2 * np.pi
-        x = x * ampl * np.exp(1j * phase)
-        fft_model = FftModel(x, w_p=14)
-        x_o_model = fft_model.full_fft(scaling='one', ifft=True)  # model output
-
-        y = np.zeros(self.fft.n, dtype="complex")
-        for i, k in enumerate(x):
-            y[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.fft.width_int)
-        y = y.real.astype('int').tolist()
+        fft_model = FftModel(self.x, w_p=14)
+        x_o_model = fft_model.full_fft(scaling='one', ifft=True)
+        y = prep_mem(self.x, self.fft.width_int)
         x_o_sim = self.run_fft_sim(y, 0)
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 
     def test_scaling(self):
-        """ 2**5 scaling test of fft calculation
-
-        """
+        """ 2**5 scaling test of fft calculation"""
         self.fft = Fft(n=128, ifft=True, input_order='natural')
-        x = np.ones(self.fft.n, dtype="complex")
-        ampl = 2048
-        seed = np.random.randint(2 ** 32)
-        np.random.seed(seed)
-        print(f'random seed scaling: {seed}')
-        phase = np.random.rand(self.fft.n) * 2 * np.pi
-        x = x * ampl * np.exp(1j * phase)
-        fft_model = FftModel(x, w_p=14)
-        x_o_model = fft_model.full_fft(scaling=5, ifft=True)  # model output
-
-        y = np.zeros(self.fft.n, dtype="complex")
-        for i, k in enumerate(x):
-            y[i] = (int(k.real) & int("0x0000ffff", 0)) | (int(k.imag) << self.fft.width_int)
-        y = y.real.astype('int').tolist()
+        fft_model = FftModel(self.x, w_p=14)
+        x_o_model = fft_model.full_fft(scaling=5, ifft=True)
+        y = prep_mem(self.x, self.fft.width_int)
         x_o_sim = self.run_fft_sim(y, 5) * 2 ** -5
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
 
-if __name__ == '__main__':
-    unittest.main()
