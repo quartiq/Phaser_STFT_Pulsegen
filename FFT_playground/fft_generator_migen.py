@@ -12,7 +12,7 @@ class Fft(Module):
 
         Radix-2 division in time (DIT) block-FFT.
         Complex datasamples are first loaded into the memory, an FFT is performed on the data and
-        computed FFT samples can then be read out.
+        computed FFT samples can then be read out. Imag and real part are represented concatenated.
         One pipelined butterfly computation core iterates over the data and computes one
         set of two new complex samples each clockcycle.
         The complete FFT therefore takes ((N/2)*log2(N))+PIPE_DELAY clockcycles.
@@ -56,8 +56,7 @@ class Fft(Module):
         width_o : output width
         width_int : internal computation and memory width
         width_wram : twiddle memory width
-        input_order : natural or bit-reversed input
-        cmult : complex multiplier option
+        input_bitreversed : natural or bit-reversed input
     """
 
     def __init__(self, n=32, ifft=False, width_i=16, width_o=16, width_int=16,
@@ -92,16 +91,16 @@ class Fft(Module):
         bi = Signal((self.width_int, True))
         self.stage = Signal(int(np.ceil(np.log2(self.log2n))) + 1)  # global stage counter
         self.en = Signal()  # global bfl computation enable Signal
-        self.scaling_reg = Signal(self.log2n)   # registered scaling value
+        self.scaling_reg = Signal(self.log2n)  # registered scaling value
         s = Signal()  # butterfly computations output scaling signal
 
         # Instantiate Butterfly
         cr, ci, dr, di = self._bfl_core(ar, ai, br, bi, s)
 
         # Data Memories
-        xram1 = Memory(width_int * 2, int(n / 2),name="data1")
-        xram2a = Memory(width_int * 2, int(n / 2),name="data2a")
-        xram2b = Memory(width_int * 2, int(n / 2),name="data2b")
+        xram1 = Memory(width_int * 2, int(n / 2), name="data1")
+        xram2a = Memory(width_int * 2, int(n / 2), name="data2a")
+        xram2b = Memory(width_int * 2, int(n / 2), name="data2b")
         xram1_port1 = xram1.get_port(write_capable=True, mode=WRITE_FIRST)
         xram1_port2 = xram1.get_port(write_capable=True)
         xram2a_port1 = xram2a.get_port(write_capable=True, mode=WRITE_FIRST)
@@ -142,7 +141,7 @@ class Fft(Module):
             xram2b_port2.adr.eq(Mux(self.busy, x2p2_adr, self.x_out_adr[:-1])),
             self.x_out.eq(
                 Mux(last_bit_xout_adr_l == 0, xram1_port2.dat_r,  # first half of data is in ram1, second in ram2
-                    Mux(c_x2_mux, xram2a_port2.dat_r, xram2b_port2.dat_r))), # fetch from last used ram2
+                    Mux(c_x2_mux, xram2a_port2.dat_r, xram2b_port2.dat_r))),  # fetch from last used ram2
             xram1_port2.we.eq(self.busy & bfl_we),
             xram2a_port2.we.eq(self.busy & (bfl_we & c_x2_mux)),
             xram2b_port2.we.eq(self.busy & (bfl_we & (~c_x2_mux))),
@@ -155,7 +154,7 @@ class Fft(Module):
         ]
 
         # IO logic
-        if input_bitreversed == True:
+        if input_bitreversed:
             self.comb += [
                 inp_ram_adr.eq(self.x_in_adr),  # no bitreversing, just in order
             ]
@@ -176,7 +175,7 @@ class Fft(Module):
         stage_w = Signal(int(np.ceil(np.log2(self.log2n))) + 1,
                          reset=0)  # write stage position; resets to -1 at fft start
         stage_w_n = Signal(int(np.ceil(np.log2(self.log2n))) + 1,
-                         reset=0)  # write stage position at NEXT clockcycle; resets to -1 at fft start
+                           reset=0)  # write stage position at NEXT clockcycle; resets to -1 at fft start
         a_mux = Signal()  # a ram muxing signal
         c_mux = Signal()  # c ram muxing signal
         a_mux_l = Signal()  # (last) 1 clk delayed mux; needed to route data at ram output one clk after addr was set
@@ -225,7 +224,7 @@ class Fft(Module):
 
         self.comb += posbit_r.eq(Array(pos_r)[self.stage - 1])  # Mux for read position bits
         self.comb += [posbit_w.eq(Array(pos_w)[stage_w]),  # Mux for write position bits
-                      If(stage_w >= self.log2n-1, posbit_w.eq(0))]
+                      If(stage_w >= self.log2n - 1, posbit_w.eq(0))]
 
         self.comb += [
             # fetching logic
@@ -318,7 +317,7 @@ class Fft(Module):
             wr_ram.eq(wram_port.dat_r[:self.width_wram]),  # get twiddle real
             wi_ram.eq(wram_port.dat_r[self.width_wram:]),  # get twiddle imag
         ]
-        if (self.ifft):
+        if self.ifft:
             self.comb += [
                 wr.eq(Mux(w_idx_l, wi_ram, wr_ram)),
                 wi.eq(Mux(w_idx_l, wr_ram, -wi_ram))
@@ -362,7 +361,7 @@ class Fft(Module):
                 yield self.x_in_we.eq(1)
                 yield self.x_in_adr.eq(i)
                 yield self.x_in.eq(y[i])
-            if i == self.n+1:
+            if i == self.n + 1:
                 yield self.x_in_we.eq(0)
                 yield self.start.eq(1)
                 yield self.en.eq(1)
@@ -371,18 +370,19 @@ class Fft(Module):
                 p += 1
                 xr2cpl = yield self.x_out[:self.width_o]  # x real in twos complement
                 xi2cpl = yield self.x_out[self.width_o:]  # x imag in twos complement
-                if (xr2cpl & (1 << self.width_o - 1)):
+                if xr2cpl & (1 << self.width_o - 1):
                     xr = xr2cpl - 2 ** self.width_o
                 else:
                     xr = xr2cpl
-                if (xi2cpl & (1 << self.width_o - 1)):
-                    xi = xi2cpl - 2 ** self.width_o 
+                if xi2cpl & (1 << self.width_o - 1):
+                    xi = xi2cpl - 2 ** self.width_o
                 else:
                     xi = xi2cpl
                 print(f'pos:{p - 3}\treal:{xr}  \t\timag:{xi}')
 
-            if p >= (self.n+2):
+            if p >= (self.n + 2):
                 break
+
 
 if __name__ == "__main__":
     test = Fft(n=128, ifft=True, input_order='bitreversed')

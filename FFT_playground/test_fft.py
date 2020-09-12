@@ -32,7 +32,7 @@ class TestFft(unittest.TestCase):
         seed = np.random.randint(2 ** 32)
         np.random.seed(seed)
         print(f'random seed: {seed}')
-        self.ampl=2048
+        self.ampl = 2048
         self.n = 128
         self.x = np.ones(self.n, dtype="complex")
         phase = np.random.rand(self.n) * 2 * np.pi
@@ -73,12 +73,13 @@ class TestFft(unittest.TestCase):
                         x_o_sim[p - 3] = xr + 1j * xi
                 if p >= (self.fft.n + 2):
                     break
+
         run_simulation(self.fft, fft_sim())
         return x_o_sim
 
     def test_bitreversed(self):
         """ bitreversed input test for 128 point fft with randomized phases."""
-        self.fft = Fft(n=128, ifft=True, input_order='bitreversed')
+        self.fft = Fft(n=128, ifft=True, input_bitreversed=True)
         fft_model = FftModel(self.x, w_p=14)
         x_o_model = fft_model.full_fft(scaling='one', ifft=True)
         y = bit_rev(self.x)
@@ -88,7 +89,7 @@ class TestFft(unittest.TestCase):
 
     def test_natural(self):
         """ natural order input test for 128 point fft"""
-        self.fft = Fft(n=128, ifft=True, input_order='natural')
+        self.fft = Fft(n=128, ifft=True)
         fft_model = FftModel(self.x, w_p=14)
         x_o_model = fft_model.full_fft(scaling='one', ifft=True)
         y = prep_mem(self.x, self.fft.width_int)
@@ -97,10 +98,9 @@ class TestFft(unittest.TestCase):
 
     def test_scaling(self):
         """ 2**5 scaling test of fft calculation"""
-        self.fft = Fft(n=128, ifft=True, input_order='natural')
+        self.fft = Fft(n=128, ifft=True)
         fft_model = FftModel(self.x, w_p=14)
         x_o_model = fft_model.full_fft(scaling=int('0011101', 2), ifft=True)
         y = prep_mem(self.x, self.fft.width_int)
-        x_o_sim = self.run_fft_sim(y, int('0011101', 2)) * 2 ** -4
+        x_o_sim = self.run_fft_sim(y, int('0011101', 2))
         self.assertEqual(x_o_model.tolist(), x_o_sim.tolist())
-
