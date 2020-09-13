@@ -7,3 +7,4 @@ FFT_playground/unittest.vcd
 __pycache__/
 phaser
 build
+imp_resp.vcd
