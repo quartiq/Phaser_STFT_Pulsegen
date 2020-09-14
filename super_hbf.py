@@ -47,27 +47,35 @@ class SuperHbfUS(Module):
 
         even = Signal()
 
-        a = [Signal((width_d, True), reset_less=True) for _ in range(int((len(coeff) + 1) / 2))]
+        a = [Signal((width_d, True), reset_less=True) for _ in range((len(coeff) + 1) // 2)]
+        a_del = [Signal((width_d, True), reset_less=True) for _ in range(3)]
         b = [Signal((width_d + 1, True), reset_less=True) for _ in range(n)]
         c = [Signal((width_d + 1 + width_c, True), reset_less=True) for _ in range(n)]
         d = [Signal((width_d + 1 + width_c, True), reset_less=True) for _ in range(n)]
 
         self.sync += [
             If(self.inp.stb & self.inp.ack,  # if new input sample
-               Cat(a).eq(Cat(self.inp.data, a))
+               Cat(a).eq(Cat(self.inp.data, a)),
+               Cat(a_del).eq(Cat(a[-1], a_del))  # extra delay of center tab for trivial output sample
                )
         ]
         for idx, cof in enumerate(coeff[:n * 2:2]):
             self.sync += [
                 If(self.inp.stb & self.inp.ack,  # if new input sample
-                   b[idx].eq(a[idx] + a[-(idx + 1)]),  # first dsp reg: preadd
+                   b[idx].eq(a[idx*2] + a[-1]),  # first dsp reg: preadd
                    c[idx].eq(b[idx] * cof),  # second dsp reg: mult
                    )
             ]
             if idx >= 1:  # don't accumulate the output at the input to avoid meltdown
-                self.comb += d[idx].eq(c[idx] + d[idx - 1])  # accumulate from the left
+                self.sync += [
+                    If(self.inp.stb & self.inp.ack,  # if new input sample
+                       d[idx].eq(c[idx] + d[idx - 1])  # third dsp reg: accumulate from the left
+                       )
+                ]
 
-        self.comb += d[0].eq(c[0])
+        self.sync += If(self.inp.stb & self.inp.ack,  # if new input sample
+                        d[0].eq(c[0])
+                        )
 
         self.sync += [
             If(self.ss,
@@ -75,7 +83,7 @@ class SuperHbfUS(Module):
                self.out1.ack.eq(self.inp.stb),  # always emit new sample if new input
                self.out2.ack.eq(self.inp.stb),  # always emit new sample if new input
                self.out1.data.eq(d[-1][:]),  # last dsp accu is nontrivial output shifted
-               self.out2.data.eq(a[n + 1]),  # last dsp accu is nontrivial output
+               self.out2.data.eq(a_del[-2]),  # trivial output
                ).Else(
                 self.out2.ack.eq(0),  # dont use second output
                 self.out2.data.eq(0),
@@ -88,7 +96,7 @@ class SuperHbfUS(Module):
                     self.out1.ack.eq(Mux(even, 1, 0)),  # if second sample, set out valid
                     even.eq(0),
                     self.inp.stb.eq(1),
-                    self.out1.data.eq(a[n+2]),  # trivial output
+                    self.out1.data.eq(a_del[-1]),  # trivial output
                 )
             )
         ]
