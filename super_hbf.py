@@ -1,15 +1,17 @@
 # SingularitySurfer 2020
 
-import numpy as np
-import matplotlib.pyplot as plt
 from migen import *
 from misoc.interconnect.stream import Endpoint
 
 
 class SuperHbfUS(Module):
     """Supersampled half-band fir filter upsampler. Every second output sample is just the input delayed.
-    This module computes the nontrivial sample at every cycle. Fully pipelined DSPs
-    delay = 2 + (n / 2)
+    This module computes the nontrivial sample at every cycle. Fully pipelined DSPs. Can be switched between
+    normal and supersampled output with "ss" input signal.
+
+    delay = 3 + n
+
+    TODO: switch stb and ack everywhere...
 
     Parameters
     ----------
