@@ -19,7 +19,7 @@ class TestHbfUS(unittest.TestCase):
         y = np.zeros(in_samples * 2).astype('int')
 
         def hbf_sim():
-            yield self.hbf.inp.ack.eq(1)
+            yield self.hbf.inp.stb.eq(1)
             yield self.hbf.ss.eq(1)
             for i in range(in_samples):
                 yield
@@ -36,15 +36,15 @@ class TestHbfUS(unittest.TestCase):
 
         def hbf_sim():
             p = 0
-            yield self.hbf.inp.ack.eq(1)
+            yield self.hbf.inp.stb.eq(1)
             for i in range(in_samples*2):
                 #if i == 8:  # break input datastream
-                #    yield self.hbf.inp.ack.eq(0)
+                #    yield self.hbf.inp.stb.eq(0)
                 if i == 12:
-                    yield self.hbf.inp.ack.eq(1)
+                    yield self.hbf.inp.stb.eq(1)
                 yield
                 yield self.hbf.inp.data.eq(x[i//2])
-                if (yield self.hbf.out1.ack):  # check for valid output data
+                if (yield self.hbf.out1.stb):  # check for valid output data
                     p += 1
                     y[p] = yield self.hbf.out1.data
 
