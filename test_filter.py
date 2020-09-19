@@ -6,6 +6,7 @@ from migen import *
 from misoc.interconnect.stream import Endpoint
 
 from super_hbf import SuperHbfUS
+from super_cic import SuperCicUS
 
 class TestHbfUS(unittest.TestCase):
     """HBF upsampler tests"""
@@ -78,4 +79,6 @@ class TestHbfUS(unittest.TestCase):
         y_model = np.convolve(x_zs, h)[:-len(h) + 1 - (len(h))].real.astype('int').tolist()
         self.assertEqual(y_sim, y_model)
 
+class TestCicUs(unittest.TestCase):
+    pass
 

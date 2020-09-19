@@ -4,12 +4,15 @@
 import numpy as np
 from migen import *
 from misoc.interconnect.stream import Endpoint
-from operator import and_, or_
 
 class SuperCicUS(Module):
     """Supersampled CIC filter upsampler. Interpolates the input by variable rate r.
     Processes two new output samples every clockcycle if input data isn't stalled.
+    If stalled the core waits for new samples.
 
+    Ingests on average r/2 samples every clockcycle. Eg. one sample every 3 clockcycles
+    in case of r=6. For uneven r it alternates the waiting periods ie. 3-4-3-4-3-4 etc.
+    clockcycles for r=7.
 
     Parameters
     ----------
@@ -17,6 +20,7 @@ class SuperCicUS(Module):
     n: cic order
     r_max: maximum interpolation rate
     gaincompensated: If True the output will have unity DC gain, else G=r**n
+        Will use a ROM of size r_max and a DSP block.
     """
 
     def __init__(self, width_d=16, n=6, r_max=2048, gaincompensated=True):
