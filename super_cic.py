@@ -8,30 +8,32 @@ from operator import and_, or_
 
 class SuperCicUS(Module):
     """Supersampled CIC filter upsampler. Interpolates the input by variable rate r.
-    Processes two new output samples every clockcycle.
+    Processes two new output samples every clockcycle if input data isn't stalled.
 
-    TODO: figure out uneven ratechange and changing r during operation and Gain
 
     Parameters
     ----------
-    width_d: width of the data in- and output
+    width_d: width of the data input (and output if gaincompensated)
     n: cic order
     r_max: maximum interpolation rate
+    gaincompensated: If True the output will have unity DC gain, else G=r**n
     """
 
-    def __init__(self, width_d=16, n=6, r_max=2048):
+    def __init__(self, width_d=16, n=6, r_max=2048, gaincompensated=True):
         if r_max < 2:
             raise ValueError()
         if n < 1:
-            raise ValueError()
-        if r_max < 1:
             raise ValueError()
         b_max = np.ceil(np.log2(r_max))  # max bit growth
 
         ###
         self.input = Endpoint([("data", (width_d, True))])
-        self.output = Endpoint([("data0", (width_d, True)),
-                                ("data1", (width_d, True))])
+        if gaincompensated:
+            self.output = Endpoint([("data0", (width_d, True)),
+                                    ("data1", (width_d, True))])
+        else:
+            self.output = Endpoint([("data0", (width_d + int(np.ceil(np.log2(r_max ** (n - 1)))), True)),
+                                    ("data1", (width_d + int(np.ceil(np.log2(r_max ** (n - 1)))), True))])
         self.r = Signal(int(np.ceil(np.log2(r_max))))  # rate input (inherently multiplied by two due to supersampling)
         ###
 
@@ -39,10 +41,7 @@ class SuperCicUS(Module):
         comb_ce = Signal()
         inp_stall = Signal()
         inp_stall_reg = Signal()
-
-        r_reg = Signal.like(self.r)  # i think changing r while filter is running will lead to instability --> yeap
-        log2r = self._ceil_log2(r_reg)
-        scale = Signal(int(np.ceil(np.log2(r_max) + np.log2(n))))
+        r_reg = Signal.like(self.r)
         f_rst = Signal()
 
         self.comb += f_rst.eq(Mux(self.r != r_reg, 1, 0))  # handle ratechange
@@ -61,7 +60,6 @@ class SuperCicUS(Module):
 
         self.sync += [
             r_reg.eq(self.r),
-            scale.eq(0),  # log2r * (n-1)),  # TODO: wrong
             If(~inp_stall,
                i.eq(i+1),
                ),
@@ -70,7 +68,11 @@ class SuperCicUS(Module):
                ),
         ]
 
-        sig = self.input.data
+        if gaincompensated:
+            sig = self._tweak_gain(r_reg, r_max, n, self.input.data)
+        else:
+            sig = self.input.data
+
         width = len(sig)
 
         # comb stages, one pipeline stage each
@@ -135,10 +137,19 @@ class SuperCicUS(Module):
             ]
             sig_a, sig_b = sum_a, sum_b
 
-        self.comb += [
-            self.output.data0.eq(sig_a >> scale),
-            self.output.data1.eq(sig_b >> scale),
-        ]
+        if gaincompensated:
+            scale = Signal(int(np.ceil(np.log2(r_max) + np.log2(n))))
+            log2r = self._ceil_log2(r_reg)
+            self.sync += scale.eq(log2r * (n - 1))  # small, fixed multiplier
+            self.comb += [
+                self.output.data0.eq(sig_a >> scale),
+                self.output.data1.eq(sig_b >> scale),
+            ]
+        else:
+            self.comb += [
+                self.output.data0.eq(sig_a),
+                self.output.data1.eq(sig_b),
+            ]
 
     def _ceil_log2(self, x):
         """combinatorial ceil(log2(x)) computation"""
@@ -146,24 +157,42 @@ class SuperCicUS(Module):
         log2x = Signal(int(np.ceil(np.log2(len(x)))))
         for i in range(len(x)):
             self.comb += [
-                If(x[i],
+                If((x - 1)[i],
                    temp.eq(i)
                    ),
-                log2x.eq(temp+1)
+                log2x.eq(temp + 1)
             ]
         return log2x
+
+    def _tweak_gain(self, r, r_max, n, x, width_lut=18):
+        """tweaks the DC gain of the cic to be unity for all ratechanges"""
+        tweaks = np.arange(r_max)
+        tweaks[0] = 1
+        tweaks = (np.ceil(np.log2(tweaks)) - np.log2(tweaks)) * (n - 1)
+        tweaks = (2**tweaks)
+        tweaks = tweaks * 2**(width_lut - (n - 1))
+        tweaks = tweaks.astype('int').tolist()
+        lut = Memory(width_lut, r_max, init=tweaks, name="gaintweaks")
+        port = lut.get_port(write_capable=False)
+        self.specials += lut, port
+        out = Signal((len(x) + n, True))
+        self.sync += [
+            port.adr.eq(r),
+            out.eq((port.dat_r * x) >> (width_lut - (n - 1)))
+            ]
+        return out
 
 
     def sim(self):
         yield
         yield self.r.eq(2)
         yield
-        yield self.input.data.eq(1)
+        yield self.input.data.eq(10000)
         yield self.input.stb.eq(1)
         yield
-        for i in range(1000):
-            if i == 100:
-                yield self.r.eq(13)
+        for i in range(2000):
+            if i % 150:
+                yield self.r.eq(i//150)
             if i == 127:
                 yield self.input.stb.eq(0)
                 print(i)
@@ -174,5 +203,5 @@ class SuperCicUS(Module):
             yield
 
 if __name__ == "__main__":
-    test = SuperCicUS(n=6)
+    test = SuperCicUS(n=6, gaincompensated=False)
     run_simulation(test, test.sim(), vcd_name="cic_sim.vcd")
