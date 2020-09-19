@@ -4,12 +4,13 @@
 import numpy as np
 from migen import *
 from misoc.interconnect.stream import Endpoint
+from operator import and_, or_
 
 class SuperCicUS(Module):
     """Supersampled CIC filter upsampler. Interpolates the input by variable rate r.
     Processes two new output samples every clockcycle.
 
-    TODO: figure out uneven ratechange and changing r during operation
+    TODO: figure out uneven ratechange and changing r during operation and Gain
 
     Parameters
     ----------
@@ -37,29 +38,34 @@ class SuperCicUS(Module):
         i = Signal.like(self.r)
         comb_ce = Signal()
         inp_stall = Signal()
+        inp_stall_reg = Signal()
 
-
-        r_reg = Signal.like(self.r)  # i think changing r while filter is running will lead to instability
-        log2r = self._ceil_log2(self.r)
+        r_reg = Signal.like(self.r)  # i think changing r while filter is running will lead to instability --> yeap
+        log2r = self._ceil_log2(r_reg)
         scale = Signal(int(np.ceil(np.log2(r_max) + np.log2(n))))
+        f_rst = Signal()
 
+        self.comb += f_rst.eq(Mux(self.r != r_reg, 1, 0))  # handle ratechange
+
+        # Filter "clocking" from the input. Halts if no new samples.
         self.comb += [
             comb_ce.eq(self.input.ack & self.input.stb),
             self.output.ack.eq(~inp_stall),
-            self.input.ack.eq((i == r_reg) | inp_stall),
+            self.input.ack.eq((i == 0) | inp_stall_reg | (i == r_reg[1:])),
+            inp_stall.eq(self.input.ack & ~self.input.stb)
         ]
 
         self.sync += [
-            inp_stall.eq( self.input.ack & ~self.input.stb)
+            inp_stall_reg.eq(inp_stall)
         ]
 
         self.sync += [
-            r_reg.eq(self.r[1:]),  # times two due to supersampling
-            scale.eq(log2r * (n-1)),  # TODO: wrong
+            r_reg.eq(self.r),
+            scale.eq(0),  # log2r * (n-1)),  # TODO: wrong
             If(~inp_stall,
                i.eq(i+1),
                ),
-            If(i == r_reg,
+            If((i == r_reg - 1) | f_rst,
                 i.eq(0),
                ),
         ]
@@ -77,6 +83,10 @@ class SuperCicUS(Module):
                    old.eq(sig),
                    diff.eq(sig - old)
                    ),
+                If(f_rst,
+                   old.eq(0),
+                   diff.eq(0)
+                   )
             ]
             sig = diff
 
@@ -91,8 +101,15 @@ class SuperCicUS(Module):
         self.sync += [
             sig_a.eq(sig_b),
             If(comb_ce,
-                sig_b.eq(sig_i),
-            )
+               If((i == 0) & r_reg[0],
+                  sig_a.eq(sig_i),
+                  ),
+               sig_b.eq(sig_i)
+            ),
+            If(f_rst,
+               sig_a.eq(0),
+               sig_b.eq(0),
+               )
         ]
 
         # integrator stages, two pipeline stages each
@@ -108,7 +125,13 @@ class SuperCicUS(Module):
                     sum_ab.eq(sig_a + sig_b),
                     sum_a.eq(sum_b + sig_a0),
                     sum_b.eq(sum_b + sum_ab),
-                )
+                ),
+                If(f_rst,
+                   sig_a0.eq(0),
+                   sum_ab.eq(0),
+                   sum_a.eq(0),
+                   sum_b.eq(0),
+                   )
             ]
             sig_a, sig_b = sum_a, sum_b
 
@@ -133,20 +156,23 @@ class SuperCicUS(Module):
 
     def sim(self):
         yield
+        yield self.r.eq(2)
+        yield
         yield self.input.data.eq(1)
         yield self.input.stb.eq(1)
-        yield self.r.eq(30)
         yield
         for i in range(1000):
-            if i==100:
+            if i == 100:
+                yield self.r.eq(13)
+            if i == 127:
                 yield self.input.stb.eq(0)
                 print(i)
-            if i==200:
+            if i == 144:
                 yield self.input.stb.eq(1)
                 print(i)
             #yield self.input.data.eq(0)
             yield
 
 if __name__ == "__main__":
-    test = SuperCicUS()
+    test = SuperCicUS(n=6)
     run_simulation(test, test.sim(), vcd_name="cic_sim.vcd")
