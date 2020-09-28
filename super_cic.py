@@ -14,6 +14,8 @@ class SuperCicUS(Module):
     in case of r=6. For uneven r it alternates the waiting periods ie. 3-4-3-4-3-4 etc.
     clockcycles for r=7.
 
+    Adapted from the Misoc DUC CIC.
+
     Parameters
     ----------
     width_d: width of the data input (and output if gaincompensated)
@@ -21,9 +23,10 @@ class SuperCicUS(Module):
     r_max: maximum interpolation rate
     gaincompensated: If True the output will have unity DC gain, else G=r**n
         Will use a ROM of size r_max and a DSP block.
+    width_lut: Width oof the gain compensation ROM LUT if in use
     """
 
-    def __init__(self, width_d=16, n=6, r_max=2048, gaincompensated=True):
+    def __init__(self, width_d=16, n=6, r_max=2048, gaincompensated=True, width_lut=18):
         if r_max < 2:
             raise ValueError()
         if n < 1:
@@ -38,7 +41,7 @@ class SuperCicUS(Module):
         else:
             self.output = Endpoint([("data0", (width_d + int(np.ceil(np.log2(r_max ** (n - 1)))), True)),
                                     ("data1", (width_d + int(np.ceil(np.log2(r_max ** (n - 1)))), True))])
-        self.r = Signal(int(np.ceil(np.log2(r_max))))  # rate input (inherently multiplied by two due to supersampling)
+        self.r = Signal(int(np.ceil(np.log2(r_max))))  # rate input (always at least two due to supersampling)
         ###
 
         i = Signal.like(self.r)
@@ -48,12 +51,12 @@ class SuperCicUS(Module):
         r_reg = Signal.like(self.r)
         f_rst = Signal()
 
-        self.comb += f_rst.eq(Mux(self.r != r_reg, 1, 0))  # handle ratechange
+        self.comb += f_rst.eq(self.r != r_reg)  # handle ratechange
 
         # Filter "clocking" from the input. Halts if no new samples.
         self.comb += [
             comb_ce.eq(self.input.ack & self.input.stb),
-            self.output.ack.eq(~inp_stall),
+            self.output.stb.eq(~inp_stall),
             self.input.ack.eq((i == 0) | inp_stall_reg | (i == r_reg[1:])),
             inp_stall.eq(self.input.ack & ~self.input.stb)
         ]
@@ -73,7 +76,7 @@ class SuperCicUS(Module):
         ]
 
         if gaincompensated:
-            sig = self._tweak_gain(r_reg, r_max, n, self.input.data)
+            sig, shift = self._tweak_gain(r_reg, r_max, n, self.input.data, width_lut=width_lut)
         else:
             sig = self.input.data
 
@@ -94,6 +97,7 @@ class SuperCicUS(Module):
                    diff.eq(0)
                    )
             ]
+
             sig = diff
 
         # zero stuffer, gearbox, and first integrator, one pipeline stage
@@ -142,12 +146,9 @@ class SuperCicUS(Module):
             sig_a, sig_b = sum_a, sum_b
 
         if gaincompensated:
-            scale = Signal(int(np.ceil(np.log2(r_max) + np.log2(n))))
-            log2r = self._ceil_log2(r_reg)
-            self.sync += scale.eq(log2r * (n - 1))  # small, fixed multiplier
             self.comb += [
-                self.output.data0.eq(sig_a >> scale),
-                self.output.data1.eq(sig_b >> scale),
+                self.output.data0.eq(sig_a >> shift),
+                self.output.data1.eq(sig_b >> shift),
             ]
         else:
             self.comb += [
@@ -172,19 +173,26 @@ class SuperCicUS(Module):
         """tweaks the DC gain of the cic to be unity for all ratechanges"""
         tweaks = np.arange(r_max)
         tweaks[0] = 1
-        tweaks = (np.ceil(np.log2(tweaks)) - np.log2(tweaks)) * (n - 1)
+        shifts = np.ceil(np.log2(tweaks ** (n -1))).astype('int').tolist()
+        bitshift_lut_width = int(np.ceil(np.log2(max(shifts))))  # Nr. bits for the bitshifting LUT. The rest will be gaintweak LUT.
+        print(f'bitshift bits in LUT: {bitshift_lut_width}')
+        tweaks = (np.ceil(np.log2(tweaks ** (n - 1))) - np.log2(tweaks ** (n - 1)))
         tweaks = (2**tweaks)
-        tweaks = tweaks * 2**(width_lut - (n - 1))
+        tweaks = tweaks * 2**(width_lut - bitshift_lut_width - 1)
         tweaks = tweaks.astype('int').tolist()
+        for i, e in enumerate(tweaks):
+            tweaks[i] = tweaks[i] | (shifts[i] << (width_lut - bitshift_lut_width))
         lut = Memory(width_lut, r_max, init=tweaks, name="gaintweaks")
         port = lut.get_port(write_capable=False)
         self.specials += lut, port
         out = Signal((len(x) + n, True))
-        self.sync += [
+        shift = Signal((bitshift_lut_width, True))
+        self.comb += [
             port.adr.eq(r),
-            out.eq((port.dat_r * x) >> (width_lut - (n - 1)))
+            out.eq((port.dat_r[:(width_lut - bitshift_lut_width)] * x) >> (width_lut - bitshift_lut_width - 1)),
+            shift.eq(port.dat_r[(width_lut - bitshift_lut_width):])
             ]
-        return out
+        return out, shift
 
 
     def sim(self):
@@ -207,5 +215,5 @@ class SuperCicUS(Module):
             yield
 
 if __name__ == "__main__":
-    test = SuperCicUS(n=6, gaincompensated=False)
+    test = SuperCicUS(n=6, gaincompensated=True)
     run_simulation(test, test.sim(), vcd_name="cic_sim.vcd")
