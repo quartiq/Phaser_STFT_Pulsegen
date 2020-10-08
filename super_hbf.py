@@ -31,7 +31,6 @@ class SuperHbfUS(Module):
             if i == n * 2 - 1:
                 if not c:
                     raise ValueError("HBF center tap must not be zero")
-                scale = log2_int(c)
             elif i & 1:
                 if c:
                     raise ValueError("HBF even taps must be zero", (i, c))

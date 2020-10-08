@@ -1,0 +1,204 @@
+# SingularitySurfer 2020
+
+
+import numpy as np
+from migen import *
+from misoc.interconnect.stream import Endpoint
+
+
+class SuperInterpolator(Module):
+    """Supersampled Interpolator.
+
+    Parameters
+    ----------
+    """
+
+    def __init__(self, width_d=16, r_max=8192):
+        l2r = int(np.ceil(np.log2(r_max)))
+
+        ###
+        self.input = Endpoint([("data", (width_d, True))])
+        self.output = Endpoint([("data0", (width_d, True)),
+                                ("data1", (width_d, True))])
+        self.r = Signal(l2r)
+        ###
+
+        self.hbfstop = Signal()  # global stop signal
+        self.mode2 = Signal()  # dual hbf mode
+        self.step1 = Signal()  # hbf0 step1 signal if in mode 2
+
+        nr_dsps = 15
+        width_coef = 18
+
+        #  HBF0 impulse response:
+        h_0 = [9, 0, -32, 0, 83, 0, -183, 0,
+               360, 0, -650, 0, 1103, 0, -1780, 0,
+               2765, 0, -4184, 0, 6252, 0, -9411, 0,
+               14803, 0, -26644, 0, 83046, 131072, 83046, 0,
+               -26644, 0, 14803, 0, -9411, 0, 6252, 0,
+               -4184, 0, 2765, 0, -1780, 0, 1103, 0,
+               -650, 0, 360, 0, -183, 0, 83, 0,
+               -32, 0, 9]
+        #  HBF1 impulse response:
+        h_1 = [69, 0, -418, 0, 1512, 0, -4175, 0,
+               9925, 0, -23146, 0, 81772, 131072, 81772, 0,
+               -23146, 0, 9925, 0, -4175, 0, 1512, 0,
+               -418, 0, 69]
+        coef_a = []
+        for i, coef in enumerate(h_0[: (len(h_0) + 1) // 2: 2]):
+            coef_a.append(Signal((width_coef, True), reset=coef))
+        coef_b = []
+        for i, coef in enumerate(h_1[: (len(h_1) + 1) // 2: 2]):
+            coef_b.append(Signal((width_coef, True), reset=coef))
+
+        x = [Signal((width_d, True)) for _ in range(((len(coef_a) * 2) + 2))]
+        x_end_l = Signal((width_d, True))
+        self.sync += [
+            If(~self.hbfstop,
+               If(~self.mode2 | (self.mode2 & self.step1),
+                  Cat(x).eq(Cat(self.input.data, x)),
+                  ),
+               self.step1.eq(~self.step1),
+               x_end_l.eq(x[-4]),  # last sample in inputchain (plus dsp reg delay) needs to be delayed by one clk more.
+               ),
+        ]
+        y = [Signal((48, True)) for _ in range(nr_dsps)]
+        y_reg = [Signal((48, True)) for _ in range(((nr_dsps - 1) // 2) + 1)]
+        for i in range(nr_dsps):  # hardcoded dsp architecture
+            a, b, c, d, mux_p, p = self._dsp()
+
+            if i <= ((nr_dsps - 1) // 2) - 1:  # if first HBF in mode 2
+                self.comb += [
+                    y[i].eq(p),
+                    If(~self.mode2,
+                       mux_p.eq(1),
+                       a.eq(x[i * 2]),
+                       d.eq(x[-3]),  # third to last bc one extra samples for midpoint output
+                       b.eq(coef_a[i]),
+                       ).Else(  # if in mode 2
+                        If(~self.step1,
+                           mux_p.eq(1),
+                           a.eq(x[i * 4]),
+                           d.eq(x_end_l),
+                           b.eq(coef_a[i * 2]),
+                           ).Else(
+                            mux_p.eq(0),
+                            a.eq(x[(i * 4) + 1]),
+                            d.eq(x_end_l),
+                            b.eq(coef_a[(i * 2) + 1]),
+                        )
+                    )
+                ]
+                self.sync += [
+                    If(~self.step1,
+                       y_reg[i].eq(p)
+                       )
+                ]
+                if i >= 1:
+                    self.comb += [
+                        c.eq(Mux(self.mode2, y_reg[i - 1], y[i - 1])),
+                        #c.eq(y[i-1])
+                    ]
+
+            elif i == ((nr_dsps - 1) // 2):
+                self.comb += [
+                    y[i].eq(p),
+                    c.eq(Mux(self.mode2, y_reg[i - 1], y[i - 1])),
+                    If(~self.mode2,
+                       mux_p.eq(1),
+                       a.eq(x[i * 2]),
+                       d.eq(x[-3]),  # third to last bc one extra samples for midpoint output
+                       b.eq(coef_a[i]),
+                       ).Else(  # if in mode 2
+                        If(~self.step1,
+                           mux_p.eq(1),
+                           a.eq(x[i * 4]),
+                           d.eq(x_end_l),
+                           b.eq(coef_a[i * 2]),
+                           ).Else(
+                            mux_p.eq(0),
+                            a.eq(x[(i * 4) + 1]),
+                            d.eq(x_end_l),
+                            b.eq(0),
+                        )
+                    )
+                ]
+
+            else:  # if second HBF in mode 2
+                self.comb += [
+                    y[i].eq(p),
+                    If(~self.mode2,
+                       mux_p.eq(1),
+                       a.eq(x[i * 2]),
+                       d.eq(x[-3]),  # third to last bc one extra samples for midpoint output
+                       b.eq(coef_a[i]),
+                       y[i].eq(p),
+                       c.eq(y[i - 1])
+                       )
+                ]
+
+        self.comb += [
+            If(~self.mode2,
+               self.input.ack.eq(1),
+               self.output.stb.eq(self.input.ack),
+               self.output.data0.eq(y[nr_dsps - 1][width_coef - 1:width_coef - 1 + width_d]),
+               self.output.data1.eq(x[-1]),
+               )
+        ]
+
+    def _dsp(self):
+        """Fully pipelined DSP block mockup.
+        Signal widths are for Xilinx DSP slices."""
+
+        a = Signal((30, True))
+        b = Signal((18, True))
+        b_reg = Signal((18, True))
+        c = Signal((48, True))
+        d = Signal((25, True))
+        mux_p = Signal()  # accumulator mux
+        # mux_p_reg = [Signal() for _ in range(2)]
+        ad = Signal((25, True))
+        m = Signal((48, True))
+        p = Signal((48, True))
+        self.sync += [
+            If(~self.hbfstop,
+               b_reg.eq(b),
+               # Cat(mux_p_reg).eq(Cat(mux_p, mux_p_reg)),
+               ad.eq(a + d),
+               m.eq(ad * b_reg),
+               If(~mux_p, p.eq(p + m)
+                  ).Else(p.eq(m + c))
+               )
+        ]
+        return a, b, c, d, mux_p, p
+
+    def sim(self):
+        yield
+        yield
+        #yield self.mode2.eq(1)
+        yield self.input.stb.eq(1)
+        yield self.input.data.eq((2**14)-1)
+        yield
+        yield
+        yield
+        for i in range(20):
+            yield
+        yield self.input.data.eq(0)
+        # for i in range(20):
+        #     yield
+        # yield self.input.data.eq(1)
+        # yield
+        # yield
+        # yield self.input.data.eq(0)
+        # yield
+        # yield
+        # yield self.input.data.eq(1)
+        # yield
+        # yield self.input.data.eq(0)
+        for i in range(1000):
+            yield
+
+
+if __name__ == "__main__":
+    test = SuperInterpolator()
+    run_simulation(test, test.sim(), vcd_name="interpolator_sim.vcd")
