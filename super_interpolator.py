@@ -31,6 +31,7 @@ class SuperInterpolator(Module):
         self.mode3 = Signal()
         hbf0_step1 = Signal()  # hbf0 step1 signal if in mode 2
         hbf1_step1 = Signal()
+        muxsel0 = Signal()  # necessary bc migen Muxes dont work.
 
         nr_dsps = 15
         width_coef = 18
@@ -66,14 +67,15 @@ class SuperInterpolator(Module):
         y_reg = [Signal((48, True)) for _ in range(((nr_dsps - 1) // 2) + 1)]
 
         # last stage: supersampled CIC interpolator
-        self.submodules.cic = SuperCicUS(width_d=width_d, n=6, r_max=r_max//4, gaincompensated=False, width_lut=18)
+        self.submodules.cic = SuperCicUS(width_d=width_d, n=6, r_max=r_max//4, gaincompensated=True, width_lut=18)
 
 
         # Interpolator mode and dataflow handling
         self.comb += [
             self.mode2.eq(Mux(self.r >= 4, 1, 0)),
             self.mode3.eq(Mux(self.r >= 8, 1, 0)),
-            self.hbfstop.eq(Mux(self.mode3, ~self.cic.input.ack, 0)),
+            muxsel0.eq((~self.cic.input.ack) | (self.mode3 & hbf1_step1)),
+            self.hbfstop.eq(Mux(muxsel0, 1, 0)),
             self.cic.r.eq(self.r[2:]),  # r_cic = r_inter//4
             self.cic.input.data.eq(Mux(hbf1_step1, y[-1][width_coef - 1:width_coef - 1 + width_d], x1_[-1])),
             self.cic.input.stb.eq(self.mode3),
@@ -89,8 +91,8 @@ class SuperInterpolator(Module):
 
                # input to second hbf
                Cat(x1_).eq(Cat(Mux(hbf0_step1, x1__, x[-2]), x1_)),
-               hbf1_step1.eq(~hbf1_step1)
                ),
+            If(self.cic.input.ack, hbf1_step1.eq(~hbf1_step1))
         ]
 
         # Hardwired dual HBF upsampler DSP chain
@@ -120,7 +122,7 @@ class SuperInterpolator(Module):
                     )
                 ]
                 self.sync += [
-                    If(~hbf0_step1,
+                    If(~hbf0_step1 & ~self.hbfstop,
                        y_reg[i].eq(p)
                        )
                 ]
@@ -237,13 +239,13 @@ class SuperInterpolator(Module):
     def sim(self):
         yield
         yield
-        yield self.r.eq(4)
+        yield self.r.eq(20)
         yield self.input.stb.eq(1)
         yield self.input.data.eq((2**14)-1)
         yield
         yield
         yield
-        for i in range(20):
+        for i in range(40):
             yield
         yield self.input.data.eq(0)
         # for i in range(20):
