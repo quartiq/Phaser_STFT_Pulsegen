@@ -60,10 +60,10 @@ class TestInterpolator(unittest.TestCase):
                 yield self.inter.input.stb.eq(1)
                 if (yield self.inter.output.stb):  # check for valid output data
                     v0 = yield self.inter.output.data0
-                    if v0<0:
+                    if v0 < 0:
                         v0 += 1
                     v1 = yield self.inter.output.data1
-                    if v1<0:
+                    if v1 < 0:
                         v1 += 1
                     y.append(v0)
                     y.append(v1)

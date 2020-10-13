@@ -5,6 +5,8 @@ import numpy as np
 from migen import *
 from misoc.interconnect.stream import Endpoint
 
+from super_cic import SuperCicUS
+
 
 class SuperInterpolator(Module):
     """Supersampled Interpolator.
@@ -23,12 +25,16 @@ class SuperInterpolator(Module):
         self.r = Signal(l2r)
         ###
 
-        self.hbfstop = Signal()  # global stop signal
+        self.hbfstop = Signal()  # hbf stop signal
+        self.inp_stall = Signal()  # global input stall (stop) signal
         self.mode2 = Signal()  # dual hbf mode
-        self.step1 = Signal()  # hbf0 step1 signal if in mode 2
+        self.mode3 = Signal()
+        hbf0_step1 = Signal()  # hbf0 step1 signal if in mode 2
+        hbf1_step1 = Signal()
 
         nr_dsps = 15
         width_coef = 18
+        midpoint = (nr_dsps - 1) // 2
 
         #  HBF0 impulse response:
         h_0 = [9, 0, -32, 0, 83, 0, -183, 0,
@@ -51,20 +57,44 @@ class SuperInterpolator(Module):
         for i, coef in enumerate(h_1[: (len(h_1) + 1) // 2: 2]):
             coef_b.append(Signal((width_coef, True), reset=coef))
 
-        x = [Signal((width_d, True)) for _ in range(((len(coef_a) * 2) + 2))]
+        x = [Signal((width_d, True)) for _ in range(((len(coef_a) * 2) + 2))]  # input hbf0
         x_end_l = Signal((width_d, True))
-        self.sync += [
-            If(~self.hbfstop,
-               If(~self.mode2 | (self.mode2 & self.step1),
-                  Cat(x).eq(Cat(self.input.data, x)),
-                  ),
-               self.step1.eq(~self.step1),
-               x_end_l.eq(x[-4]),  # last sample in inputchain (plus dsp reg delay) needs to be delayed by one clk more.
-               ),
-        ]
+        x1_ = [Signal((width_d, True)) for _ in range(((len(coef_b) * 2) + 2))]  # input hbf1
+        x1__ = Signal((width_d, True))  # intermediate signal
+
         y = [Signal((48, True)) for _ in range(nr_dsps)]
         y_reg = [Signal((48, True)) for _ in range(((nr_dsps - 1) // 2) + 1)]
-        for i in range(nr_dsps):  # hardcoded dsp architecture
+
+        # last stage: supersampled CIC interpolator
+        self.submodules.cic = SuperCicUS(width_d=width_d, n=6, r_max=r_max//4, gaincompensated=False, width_lut=18)
+
+
+        # Interpolator mode and dataflow handling
+        self.comb += [
+            self.mode2.eq(Mux(self.r >= 4, 1, 0)),
+            self.mode3.eq(Mux(self.r >= 8, 1, 0)),
+            self.hbfstop.eq(Mux(self.mode3, ~self.cic.input.ack, 0)),
+            self.cic.r.eq(self.r[2:]),  # r_cic = r_inter//4
+            self.cic.input.data.eq(Mux(hbf1_step1, y[-1][width_coef - 1:width_coef - 1 + width_d], x1_[-1])),
+            self.cic.input.stb.eq(self.mode3),
+            x1__.eq(y[midpoint][width_coef - 1:width_coef - 1 + width_d]),
+        ]
+        self.sync += [
+            If(~self.hbfstop,
+               If(~self.mode2 | (self.mode2 & hbf0_step1),
+                  Cat(x).eq(Cat(self.input.data, x)),
+                  ),
+               hbf0_step1.eq(~hbf0_step1),
+               x_end_l.eq(x[-4]),  # last sample in inputchain (plus dsp reg delay) needs to be delayed by one clk more.
+
+               # input to second hbf
+               Cat(x1_).eq(Cat(Mux(hbf0_step1, x1__, x[-2]), x1_)),
+               hbf1_step1.eq(~hbf1_step1)
+               ),
+        ]
+
+        # Hardwired dual HBF upsampler DSP chain
+        for i in range(nr_dsps):
             a, b, c, d, mux_p, p = self._dsp()
 
             if i <= ((nr_dsps - 1) // 2) - 1:  # if first HBF in mode 2
@@ -76,7 +106,7 @@ class SuperInterpolator(Module):
                        d.eq(x[-3]),  # third to last bc one extra samples for midpoint output
                        b.eq(coef_a[i]),
                        ).Else(  # if in mode 2
-                        If(~self.step1,
+                        If(~hbf0_step1,
                            mux_p.eq(1),
                            a.eq(x[i * 4]),
                            d.eq(x_end_l),
@@ -90,7 +120,7 @@ class SuperInterpolator(Module):
                     )
                 ]
                 self.sync += [
-                    If(~self.step1,
+                    If(~hbf0_step1,
                        y_reg[i].eq(p)
                        )
                 ]
@@ -100,7 +130,7 @@ class SuperInterpolator(Module):
                         #c.eq(y[i-1])
                     ]
 
-            elif i == ((nr_dsps - 1) // 2):
+            elif i == midpoint:
                 self.comb += [
                     y[i].eq(p),
                     c.eq(Mux(self.mode2, y_reg[i - 1], y[i - 1])),
@@ -110,7 +140,7 @@ class SuperInterpolator(Module):
                        d.eq(x[-3]),  # third to last bc one extra samples for midpoint output
                        b.eq(coef_a[i]),
                        ).Else(  # if in mode 2
-                        If(~self.step1,
+                        If(~hbf0_step1,
                            mux_p.eq(1),
                            a.eq(x[i * 4]),
                            d.eq(x_end_l),
@@ -124,7 +154,7 @@ class SuperInterpolator(Module):
                     )
                 ]
 
-            else:  # if second HBF in mode 2
+            elif i == midpoint + 1:  # second half of dsp chain
                 self.comb += [
                     y[i].eq(p),
                     If(~self.mode2,
@@ -134,15 +164,47 @@ class SuperInterpolator(Module):
                        b.eq(coef_a[i]),
                        y[i].eq(p),
                        c.eq(y[i - 1])
-                       )
+                       ).Else(
+                        mux_p.eq(1),
+                        a.eq(x1_[(i - midpoint - 1) * 2]),
+                        d.eq(x1_[-3]),  # third to last bc one extra samples for midpoint output
+                        b.eq(coef_b[i - midpoint - 1]),
+                        y[i].eq(p),
+                        c.eq(0)
+                    )
+                ]
+
+            else:  # second half of dsp chain
+                self.comb += [
+                    y[i].eq(p),
+                    If(~self.mode2,
+                       mux_p.eq(1),
+                       a.eq(x[i * 2]),
+                       d.eq(x[-3]),  # third to last bc one extra samples for midpoint output
+                       b.eq(coef_a[i]),
+                       y[i].eq(p),
+                       c.eq(y[i - 1])
+                       ).Else(
+                        mux_p.eq(1),
+                        a.eq(x1_[(i - midpoint - 1) * 2]),
+                        d.eq(x1_[-3]),  # third to last bc one extra samples for midpoint output
+                        b.eq(coef_b[i - midpoint - 1]),
+                        y[i].eq(p),
+                        c.eq(y[i - 1])  # OVERWRITE
+                    )
                 ]
 
         self.comb += [
-            If(~self.mode2,
+            If(~self.mode3,
                self.input.ack.eq(1),
                self.output.stb.eq(self.input.ack),
-               self.output.data0.eq(y[nr_dsps - 1][width_coef - 1:width_coef - 1 + width_d]),
-               self.output.data1.eq(x[-1]),
+               self.output.data0.eq(y[-1][width_coef - 1:width_coef - 1 + width_d]),
+               self.output.data1.eq(Mux(self.mode2, x1_[-1], x[-1])),
+               ).Else(  # If CIC engaged
+                   self.input.ack.eq(1),
+                   self.output.stb.eq(self.input.ack),
+                   self.output.data0.eq(self.cic.output.data0),
+                   self.output.data1.eq(self.cic.output.data1),
                )
         ]
 
@@ -175,7 +237,7 @@ class SuperInterpolator(Module):
     def sim(self):
         yield
         yield
-        #yield self.mode2.eq(1)
+        yield self.r.eq(4)
         yield self.input.stb.eq(1)
         yield self.input.data.eq((2**14)-1)
         yield
