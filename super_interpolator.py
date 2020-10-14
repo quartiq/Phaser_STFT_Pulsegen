@@ -11,18 +11,30 @@ from super_cic import SuperCicUS
 class SuperInterpolator(Module):
     """Supersampled Interpolator.
 
+    Variable rate, >89.5dB image rejection, supersampled (two outputs per cycle) Interpolator.
+
+    misoc streams
+    hbf filters
+    cic filter
+    rate change behaviour
+    input stb ignored
+
+    TODO: rounding
+
     Parameters
     ----------
+    width_d: width of the data in- and output
+    r_max: maximum rate change
     """
 
-    def __init__(self, width_d=16, r_max=8192):
+    def __init__(self, width_d=16, r_max=4096):
         l2r = int(np.ceil(np.log2(r_max)))
 
         ###
-        self.input = Endpoint([("data", (width_d, True))])
-        self.output = Endpoint([("data0", (width_d, True)),
-                                ("data1", (width_d, True))])
-        self.r = Signal(l2r)
+        self.input = Endpoint([("data", (width_d, True))])      # Data in
+        self.output = Endpoint([("data0", (width_d, True)),     # Data out 0
+                                ("data1", (width_d, True))])    # Data out 1
+        self.r = Signal(l2r)                                    # Interpolation rate
         ###
 
         self.hbfstop = Signal()  # hbf stop signal
@@ -31,7 +43,7 @@ class SuperInterpolator(Module):
         self.mode3 = Signal()
         hbf0_step1 = Signal()  # hbf0 step1 signal if in mode 2
         hbf1_step1 = Signal()
-        muxsel0 = Signal()  # necessary bc migen Muxes dont work.
+        muxsel0 = Signal()  # necessary bc big expressions in Mux condition dont work
 
         nr_dsps = 15
         width_coef = 18
@@ -69,6 +81,19 @@ class SuperInterpolator(Module):
         # last stage: supersampled CIC interpolator
         self.submodules.cic = SuperCicUS(width_d=width_d, n=6, r_max=r_max//4, gaincompensated=True, width_lut=18)
 
+        # input/output handling
+        self.comb += [
+            self.output.stb.eq(1),
+            If(~self.mode3,
+               self.input.ack.eq(Mux(self.mode2, hbf0_step1, 1)),
+               self.output.data0.eq(y[-1][width_coef - 1:width_coef - 1 + width_d]),
+               self.output.data1.eq(Mux(self.mode2, x1_[-1], x[-1])),
+               ).Else(  # If CIC engaged
+                   self.input.ack.eq(hbf0_step1 & ~self.hbfstop),
+                   self.output.data0.eq(self.cic.output.data0),
+                   self.output.data1.eq(self.cic.output.data1),
+               )
+        ]
 
         # Interpolator mode and dataflow handling
         self.comb += [
@@ -192,23 +217,9 @@ class SuperInterpolator(Module):
                         d.eq(x1_[-3]),  # third to last bc one extra samples for midpoint output
                         b.eq(coef_b[i - midpoint - 1]),
                         y[i].eq(p),
-                        c.eq(y[i - 1])  # OVERWRITE
+                        c.eq(y[i - 1])
                     )
                 ]
-
-        self.comb += [
-            If(~self.mode3,
-               self.input.ack.eq(1),
-               self.output.stb.eq(self.input.ack),
-               self.output.data0.eq(y[-1][width_coef - 1:width_coef - 1 + width_d]),
-               self.output.data1.eq(Mux(self.mode2, x1_[-1], x[-1])),
-               ).Else(  # If CIC engaged
-                   self.input.ack.eq(1),
-                   self.output.stb.eq(self.input.ack),
-                   self.output.data0.eq(self.cic.output.data0),
-                   self.output.data1.eq(self.cic.output.data1),
-               )
-        ]
 
     def _dsp(self):
         """Fully pipelined DSP block mockup.
@@ -247,7 +258,7 @@ class SuperInterpolator(Module):
         yield
         for i in range(40):
             yield
-        yield self.input.data.eq(0)
+        #yield self.input.data.eq(0)
         # for i in range(20):
         #     yield
         # yield self.input.data.eq(1)
@@ -259,8 +270,20 @@ class SuperInterpolator(Module):
         # yield self.input.data.eq(1)
         # yield
         # yield self.input.data.eq(0)
-        for i in range(1000):
+        for i in range(2000):
             yield
+            if i == 400:
+                yield self.r.eq(2)
+            if i == 600:
+                yield self.r.eq(4)
+            if i == 800:
+                yield self.r.eq(12)
+            if i == 1400:
+                yield self.r.eq(4)
+            if i == 1600:
+                yield self.r.eq(2)
+            if i == 1800:
+                yield self.r.eq(12)
 
 
 if __name__ == "__main__":
