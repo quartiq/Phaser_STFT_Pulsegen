@@ -189,7 +189,9 @@ class SuperCicUS(Module):
         shift = Signal((bitshift_lut_width, True))
         self.comb += [
             port.adr.eq(r),
-            out.eq((port.dat_r[:(width_lut - bitshift_lut_width)] * x) >> (width_lut - bitshift_lut_width - 1)),
+            temp.eq(port.dat_r[:(width_lut - bitshift_lut_width)] * x),
+            out.eq(temp >> (width_lut - bitshift_lut_width - 1)),
+            #out.eq((port.dat_r[:(width_lut - bitshift_lut_width)] * x) >> (width_lut - bitshift_lut_width - 1)),
             shift.eq(port.dat_r[(width_lut - bitshift_lut_width):])
             ]
         return out, shift
