@@ -10,7 +10,7 @@ from super_interpolator import SuperInterpolator
 class TestInterpolator(unittest.TestCase):
 
     def hbf_response(self, r):
-        assert (r == 4) | (r == 2), "unsupported rate"
+        assert r in (4, 2), "unsupported rate"
         #  HBF0 impulse response:
         h_0 = [9, 0, -32, 0, 83, 0, -183, 0,
                360, 0, -650, 0, 1103, 0, -1780, 0,
@@ -25,9 +25,9 @@ class TestInterpolator(unittest.TestCase):
                9925, 0, -23146, 0, 81772, 131072, 81772, 0,
                -23146, 0, 9925, 0, -4175, 0, 1512, 0,
                -418, 0, 69]
-        if (r == 2):
+        if r == 2:
             return h_0
-        if (r == 4):
+        if r == 4:
             return h_1
 
     def setup_cic_model(self, r):
