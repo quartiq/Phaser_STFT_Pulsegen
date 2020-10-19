@@ -27,8 +27,10 @@ class SuperInterpolator(Module):
     r_max: maximum rate change
     """
 
-    def __init__(self, width_d=16, r_max=4096):
+    def __init__(self, width_d=16, r_max=4096, dsp_arch="xilinx"):
         l2r = int(np.ceil(np.log2(r_max)))
+        assert dsp_arch in ("xilinx", "lattice"), "unsupported dsp architecture"
+        assert r_max % 4 == 0,  "unsupported ratechange"
 
         ###
         self.input = Endpoint([("data", (width_d, True))])      # Data in
@@ -36,6 +38,8 @@ class SuperInterpolator(Module):
                                 ("data1", (width_d, True))])    # Data out 1
         self.r = Signal(l2r)                                    # Interpolation rate
         ###
+
+        self.dsp_arch=dsp_arch
 
         self.hbfstop = Signal()  # hbf stop signal
         self.inp_stall = Signal()  # global input stall (stop) signal
@@ -75,8 +79,12 @@ class SuperInterpolator(Module):
         x1_ = [Signal((width_d, True)) for _ in range(((len(coef_b) * 2) + 2))]  # input hbf1
         x1__ = Signal((width_d, True))  # intermediate signal
 
-        y = [Signal((48, True)) for _ in range(nr_dsps)]
-        y_reg = [Signal((48, True)) for _ in range(((nr_dsps - 1) // 2) + 1)]
+        if dsp_arch == "lattice":
+            y = [Signal((36, True)) for _ in range(nr_dsps)]
+            y_reg = [Signal((36, True)) for _ in range(((nr_dsps - 1) // 2) + 1)]
+        else:  # xilinx dsp arch
+            y = [Signal((48, True)) for _ in range(nr_dsps)]
+            y_reg = [Signal((48, True)) for _ in range(((nr_dsps - 1) // 2) + 1)]
 
         # last stage: supersampled CIC interpolator
         self.submodules.cic = SuperCicUS(width_d=width_d, n=6, r_max=r_max//4, gaincompensated=True, width_lut=18)
@@ -222,19 +230,30 @@ class SuperInterpolator(Module):
                 ]
 
     def _dsp(self):
-        """Fully pipelined DSP block mockup.
-        Signal widths are for Xilinx DSP slices."""
+        """Fully pipelined DSP block mockup."""
 
-        a = Signal((30, True))
-        b = Signal((18, True))
-        b_reg = Signal((18, True))
-        c = Signal((48, True))
-        d = Signal((25, True))
-        mux_p = Signal()  # accumulator mux
-        # mux_p_reg = [Signal() for _ in range(2)]
-        ad = Signal((25, True))
-        m = Signal((48, True))
-        p = Signal((48, True))
+        if self.dsp_arch == "lattice":
+            a = Signal((18, True))
+            b = Signal((18, True))
+            b_reg = Signal((18, True))
+            c = Signal((36, True))
+            d = Signal((18, True))
+            mux_p = Signal()  # accumulator mux
+            # mux_p_reg = [Signal() for _ in range(2)]
+            ad = Signal((18, True))
+            m = Signal((36, True))
+            p = Signal((36, True))
+        else:  # xilinx dsp arch
+            a = Signal((30, True))
+            b = Signal((18, True))
+            b_reg = Signal((18, True))
+            c = Signal((48, True))
+            d = Signal((25, True))
+            mux_p = Signal()  # accumulator mux
+            # mux_p_reg = [Signal() for _ in range(2)]
+            ad = Signal((25, True))
+            m = Signal((48, True))
+            p = Signal((48, True))
         self.sync += [
             If(~self.hbfstop,
                b_reg.eq(b),
