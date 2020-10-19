@@ -44,6 +44,8 @@ class SuperCicUS(Module):
         self.r = Signal(int(np.ceil(np.log2(r_max))))  # rate input (always at least two due to supersampling)
         ###
 
+        self.width_d = width_d
+
         i = Signal.like(self.r)
         comb_ce = Signal()
         inp_stall = Signal()
@@ -187,6 +189,7 @@ class SuperCicUS(Module):
         self.specials += lut, port
         out = Signal((len(x) + n, True))
         shift = Signal((bitshift_lut_width, True))
+        temp = Signal((width_lut - bitshift_lut_width + self.width_d, True))
         self.comb += [
             port.adr.eq(r),
             temp.eq(port.dat_r[:(width_lut - bitshift_lut_width)] * x),
