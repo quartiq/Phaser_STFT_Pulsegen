@@ -216,5 +216,5 @@ class FftModel:
 
 
 if __name__ == "__main__":
-    a = FftModel(0, 6, 18)
+    a = FftModel([0], 6, 18)
     a.evaluate_ifft(128, 16, 14)

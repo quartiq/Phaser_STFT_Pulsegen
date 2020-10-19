@@ -302,7 +302,7 @@ class Fft(Module):
         """generates twiddle rom and logic for assembling the twiddles from one quarter circle"""
         pos = np.linspace(0, np.pi / 2, int(self.n / 4), False)
         self.w_p = self.width_wram - 2  # Fixed point position of twiddles. One bit is sign and one is nonfractional (ie 1 at the 0th twiddle)
-        twiddles = [(int(_.real) | int(_.imag) << self.width_wram)
+        twiddles = [(int(_.real) | int(_.imag) << self.width_wram) & (1 << self.width_wram*2)-1
                     for _ in np.round((1 << (self.width_wram - 2)) * np.exp(-1j * pos))]
         wram = Memory(self.width_wram * 2, int(self.n / 4), init=twiddles, name="twiddle")
         wram_port = wram.get_port()
