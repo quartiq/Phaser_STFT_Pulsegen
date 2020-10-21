@@ -11,20 +11,23 @@ from super_cic import SuperCicUS
 class SuperInterpolator(Module):
     """Supersampled Interpolator.
 
-    Variable rate, >89.5dB image rejection, supersampled (two outputs per cycle) Interpolator.
+    Variable rate, >89.5dB image rejection, supersampled (two outputs per cycle) interpolator.
+
+
 
     misoc streams
     hbf filters
     cic filter
     rate change behaviour
+    rate rounded down
     input stb ignored
 
-    TODO: rounding
 
     Parameters
     ----------
     width_d: width of the data in- and output
     r_max: maximum rate change
+    dsp_arch: lattice or xilinx dsp architecture
     """
 
     def __init__(self, width_d=16, r_max=4096, dsp_arch="xilinx"):
@@ -165,8 +168,8 @@ class SuperInterpolator(Module):
                         c.eq(Mux(self.mode2, y_reg[i - 1], y[i - 1])),
                         #c.eq(y[i-1])
                     ]
-                # else:
-                #     self.comb += c.eq(bias)
+                else:
+                    self.comb += c.eq(bias)
 
             elif i == midpoint:
                 self.comb += [
@@ -208,7 +211,7 @@ class SuperInterpolator(Module):
                         d.eq(x1_[-3]),  # third to last bc one extra samples for midpoint output
                         b.eq(coef_b[i - midpoint - 1]),
                         y[i].eq(p),
-                        c.eq(0)#bias)
+                        c.eq(bias)
                     )
                 ]
 
