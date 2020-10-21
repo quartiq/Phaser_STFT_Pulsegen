@@ -23,7 +23,7 @@ class SuperInterpolator(Module):
     To achieve the >89.5dB image rejection over all interpolation rates, 3 interpolation filters are used in series.
     Two halfband (HBF) FIR filters, each with a ratechange of 2 and one CIC FIR filter with a variable ratechange.
     For r=2 only the first HBF is used, for r=4 both HBFs are used in series and for r>4 both HBFs and the CIC with
-    r_cic=r/4.
+    r_cic=r/4 are engaged.
 
     The HBFs use 18 bit filter coefficients that fit both lattice and xilinx dsp architectures. Rounding is
     implemented using "half a bit" bias at the filter input (which internally has a higher precision) and cutting

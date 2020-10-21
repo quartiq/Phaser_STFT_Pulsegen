@@ -69,6 +69,7 @@ class TestInterpolator(unittest.TestCase):
                 return 18 + 20 + 50 + 2 + 28 + (((r // 4) - 1) * 94) + 1
 
     def interpolator_model(self, x, r):
+        bias = (1 << 18 - 1) - 1
         # HBF0
         h = self.hbf_response(2)
         x_stuffed = []
@@ -76,7 +77,7 @@ class TestInterpolator(unittest.TestCase):
             x_stuffed.append(xx)
             x_stuffed.append(0)
         x = (np.convolve(x_stuffed, h)).astype('int').tolist()
-        x = [xx >> 17 for xx in x]
+        x = [(xx+bias) >> 17 for xx in x]
         if r <= 2:
             return x
 
@@ -87,7 +88,7 @@ class TestInterpolator(unittest.TestCase):
             x_stuffed.append(xx)
             x_stuffed.append(0)
         x = (np.convolve(x_stuffed, h)).astype('int').tolist()
-        x = [xx >> 17 for xx in x]
+        x = [(xx+bias) >> 17 for xx in x]
         if r <= 4:
             return x
 
@@ -158,7 +159,7 @@ class TestInterpolator(unittest.TestCase):
 
         y_model = self.interpolator_model(self.x, r)
         y_sim = self.run_sim(self.x, r)
-        delay = self.calc_delay(r)
+        delay = self.calc_delay(r) 
         y_sim = y_sim[delay: delay + len(y_model)]
         self.assertEqual(y_model, y_sim)
 
