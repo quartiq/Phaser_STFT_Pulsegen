@@ -158,25 +158,13 @@ class SuperCicUS(Module):
                 self.output.data1.eq(sig_b),
             ]
 
-    def _ceil_log2(self, x):
-        """combinatorial ceil(log2(x)) computation"""
-        temp = Signal(int(np.ceil(np.log2(len(x)))))
-        log2x = Signal(int(np.ceil(np.log2(len(x)))))
-        for i in range(len(x)):
-            self.comb += [
-                If((x - 1)[i],
-                   temp.eq(i)
-                   ),
-                log2x.eq(temp + 1)
-            ]
-        return log2x
-
     def _tweak_gain(self, r, r_max, n, x, width_lut=18):
         """tweaks the DC gain of the cic to be unity for all ratechanges"""
         tweaks = np.arange(r_max)
         tweaks[0] = 1
         shifts = np.ceil(np.log2(tweaks ** (n -1))).astype('int').tolist()
-        bitshift_lut_width = int(np.ceil(np.log2(max(shifts))))  # Nr. bits for the bitshifting LUT. The rest will be gaintweak LUT.
+        bitshift_lut_width = int(np.ceil(np.log2(max(shifts))))
+        # Nr. bits for the bitshifting LUT. The rest will be gaintweak LUT.
         print(f'bitshift bits in LUT: {bitshift_lut_width}')
         tweaks = (np.ceil(np.log2(tweaks ** (n - 1))) - np.log2(tweaks ** (n - 1)))
         tweaks = (2**tweaks)
@@ -198,27 +186,3 @@ class SuperCicUS(Module):
             shift.eq(port.dat_r[(width_lut - bitshift_lut_width):])
             ]
         return out, shift
-
-
-    def sim(self):
-        yield
-        yield self.r.eq(2)
-        yield
-        yield self.input.data.eq(10000)
-        yield self.input.stb.eq(1)
-        yield
-        for i in range(2000):
-            if i % 150:
-                yield self.r.eq(i//150)
-            if i == 127:
-                yield self.input.stb.eq(0)
-                print(i)
-            if i == 144:
-                yield self.input.stb.eq(1)
-                print(i)
-            #yield self.input.data.eq(0)
-            yield
-
-if __name__ == "__main__":
-    test = SuperCicUS(n=6, gaincompensated=True)
-    run_simulation(test, test.sim(), vcd_name="cic_sim.vcd")
