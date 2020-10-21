@@ -31,6 +31,5 @@ jobs:
 
       - name: run unittests
         run: |
-          python -m unittest test_filter.py
           python -m unittest test_interpolator.py
           python -m unittest test_fft.py
