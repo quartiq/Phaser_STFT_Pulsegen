@@ -52,6 +52,7 @@ class SuperInterpolator(Module):
         nr_dsps = 15
         width_coef = 18
         midpoint = (nr_dsps - 1) // 2
+        bias = (1 << width_coef - 1) - 1
 
         #  HBF0 impulse response:
         h_0 = [9, 0, -32, 0, 83, 0, -183, 0,
@@ -164,6 +165,8 @@ class SuperInterpolator(Module):
                         c.eq(Mux(self.mode2, y_reg[i - 1], y[i - 1])),
                         #c.eq(y[i-1])
                     ]
+                # else:
+                #     self.comb += c.eq(bias)
 
             elif i == midpoint:
                 self.comb += [
@@ -205,7 +208,7 @@ class SuperInterpolator(Module):
                         d.eq(x1_[-3]),  # third to last bc one extra samples for midpoint output
                         b.eq(coef_b[i - midpoint - 1]),
                         y[i].eq(p),
-                        c.eq(0)
+                        c.eq(0)#bias)
                     )
                 ]
 
@@ -239,7 +242,6 @@ class SuperInterpolator(Module):
             c = Signal((36, True))
             d = Signal((18, True))
             mux_p = Signal()  # accumulator mux
-            # mux_p_reg = [Signal() for _ in range(2)]
             ad = Signal((18, True))
             m = Signal((36, True))
             p = Signal((36, True))
@@ -250,14 +252,13 @@ class SuperInterpolator(Module):
             c = Signal((48, True))
             d = Signal((25, True))
             mux_p = Signal()  # accumulator mux
-            # mux_p_reg = [Signal() for _ in range(2)]
             ad = Signal((25, True))
             m = Signal((48, True))
             p = Signal((48, True))
+
         self.sync += [
             If(~self.hbfstop,
                b_reg.eq(b),
-               # Cat(mux_p_reg).eq(Cat(mux_p, mux_p_reg)),
                ad.eq(a + d),
                m.eq(ad * b_reg),
                If(~mux_p, p.eq(p + m)
